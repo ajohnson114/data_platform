@@ -18,6 +18,10 @@ The following diagrams are referenced throughout this document:
 
 ---
 
+## Taking this to production
+
+Due to the author not wanting to pay to host or deploy this project it was built as a local first project meant to mock a production system but it can be translated to something more operational. Dagster in this project is split into 3 components, which will remain the same in a production environment. The webserver and daemon can have relatively small pods while the code location can be used to execute logic inside of the code location or dagser can be used with K8SJobExecutor which allows one to launch new pods for jobs or assets. For data sources, you can connect to SFTP servers, databases, external websites, API's and anything Python can connect to I believe. For the specifics modifications that would need to be to this project, you would potentially eplace duckdb with S3 as the IO manager and the local postgres with a cloud SQL database. 
+
 ## Architectural Principles
 
 ### 1. Isolation Over Coordination

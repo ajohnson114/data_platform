@@ -1,62 +1,152 @@
-# To use the platform immediately:
-
-Preliminary Step: To use this, you need to have docker desktop installed and open. A multi-platform build was done, so arm and amd users should be able to access this demo. 
-
-Step 1) In your terminal enter and execute the below command:
-
-git clone https://github.com/ajohnson114/data_platform.git
-
-Step 2) Move to the directory on your local computer with the following command (Linux based):
-
-cd ./data_platform
-
-Step 3) Enter the following command and let the application start up:
-
-make
-
-Step 4) Open a new tab and go to the following port on your computer (Copy and paste it into your search bar and hit Enter):
-
-localhost:3000
-
-# Systems design
-
-To see more information about the architecture and some systems design discussion, please see the ARCHITECTURE.md in the docs directory.
-
-Quick link: https://github.com/ajohnson114/data_platform/blob/main/docs/ARCHITECTURE.md
-
-# Notes:
-
-1) Should you test the platform, please be advised that the etl_job puts data into the database that the ml_pipeline_job pulls and trains on and thus the etl job should be run before the ml_pipeline_job. More importantly, etl_job runs the ddl to make all database tables as a consequence of me not wanting to construct the tables when the database started up since that would add complexity to the project. If you try to run the ml_pipeline_job first, it will fail due to not having the table in the database primarily, but it would also fail the asset check due to not having any data there either. The failing job, was designed to show what happens during different types of failures, for instance an asset failing a blocking asset check, and thus can be run whenever.
-
-2) The current makefile in the project root (data_platfrom_sample) is one I made after I finished coding to allow prospective viewers a way to pull my docker images from dockerhub quickly and start the project without undergoing a long build process. Should people want to actually test the code, you would have to change the Makefile_dev.txt to a Makefile (you would likely have to rename the production Makefile to Makefile_prod.txt or so first), then you can run all the same make commands from the production Makefile in the dev one, as well as being able to run 'make build' which will build the code (this will take something like 20 minutes, I believe). The development makefile interacts with the docker compose file in the deployment directory and the prod makefile interacts with the docker compose file in the root directory.
-
-3) My inclusion of a machine learning pipeline in this example isn't an endorsement of training ML models in dagster as opposed to it being a workflow that I felt made sense and was simple with the etl pipeline. I'd recommend a more robust machine learning set up (I did an end to end MLOps project a few years ago that is on my GitHub) for training and serving since they often need things like heterogenous cluster scaling and the like which dagster isn't good at.
-
-# Data Platform Sample
+# Dagster-Based Data Orchestration Platform (Reference Implementation)
 
 ## Overview
 
-This repository is a **reference implementation of a multi-team data orchestration platform** designed to support independent data pipelines owned by different teams while providing consistent execution semantics, validation guarantees, and operational clarity.
+This repository is a **reference implementation of a multi-team data orchestration platform built on top of Dagster**.
 
-The goal of this project is to demonstrate how a centralized orchestration layer can support **many independent teams** without requiring shared business logic, shared compute, or tight coupling between pipelines.
+It demonstrates how to use Dagster as an **execution substrate** while layering **platform-level abstractions** that enforce:
 
-This is a *platform*, not a pipeline.
+- Platform-level thinking
+- Team isolation
+- Standardized pipeline structure
+- Validation-driven execution
+- Clear separation between platform logic and business logic
+
+This is a **platform**, not a single pipeline.
+
+The project is intentionally scoped to focus on **architecture, contracts, and execution semantics**, rather than cloud deployment, vendor-specific infrastructure, or paid external services.
 
 ---
 
-## Why This Exists
+## What This Project Is (and Is Not)
 
+### This project *is*:
+- A Dagster-based **data orchestration platform abstraction**
+- A demonstration of **organizational scalability and team isolation patterns**
+- A local-first, reproducible execution environment
+- A systems design artifact intended for review and discussion
+
+### This project is *not*:
+- A production deployment
+- A replacement for Dagster, Airflow, or Temporal
+- An example of cloud provisioning or Kubernetes operations
+- An endorsement of training ML models inside Dagster
+
+Infrastructure concerns (Kubernetes, cloud storage, secrets management, CI/CD) are intentionally **out of scope**, but conceptual production mappings are documented.
+
+---
+
+## Architecture & Systems Design
+
+Detailed architectural discussion, design rationale, and tradeoffs are documented in:
+
+**ARCHITECTURE.md**  
+https://github.com/ajohnson114/data_platform/blob/main/docs/ARCHITECTURE.md
+
+Topics covered include:
+- Platform vs pipeline responsibilities
+- Dagster’s role in the stack
+- Validation and execution guarantees
+- Team isolation boundaries
+- Conceptual production deployment mappings
+
+---
+
+## Local Execution (Quick Start)
+
+This project is designed to be run **locally** with no cloud dependencies.
+
+### Prerequisites
+- Docker Desktop (installed and running)
+- Git
+- Linux or macOS
+- Multi-architecture Docker images supporting both ARM and AMD systems
+
+### Steps
+
+```bash
+git clone https://github.com/ajohnson114/data_platform.git
+cd data_platform
+make
+```
+
+Once the platform is running, open the Dagster UI at:
+
+http://localhost:3000
+
+# Execution Notes & Intended Behavior
+
+## Pipeline Ordering & Failure Semantics
+etl_job must be run before ml_pipeline_job
+
+### etl_job
+Creates database tables (DDL)
+Loads mock data into the database
+### ml_pipeline_job
+Depends on outputs produced by etl_job
+Will intentionally fail if prerequisites are missing
+
+## This behavior is intentional and demonstrates:
+Asset dependency enforcement
+Blocking asset checks
+Failure propagation and visibility within Dagster
+Some failing jobs exist by design to illustrate platform behavior under different failure modes.
+
+## Makefile & Development Workflow
+Two Makefiles are provided to support different review and development workflows.
+### Production-Style Makefile (Default)
+Pulls prebuilt Docker images from Docker Hub
+Optimized for fast startup and reviewer convenience
+Used by the default make command
+### Development Makefile
+Builds Docker images locally
+Build time is approximately 20 minutes
+Intended for reviewers who want to inspect, modify, or extend the code
+
+### To use the development workflow:
+Rename Makefile_dev.txt to Makefile
+Rename the existing Makefile to Makefile_prod.txt
+
+Run:
+
+make build
+
+The development Makefile uses the Docker Compose configuration in the deployment/ directory, while the production Makefile uses the root-level Docker Compose configuration.
+
+# Machine Learning Pipeline (Scope Clarification)
+A simple machine learning pipeline is included only as a downstream consumer of the data platform.
+This is not an endorsement of training ML models in Dagster.
+In production environments, ML training and serving typically require:
+Heterogeneous cluster scaling
+Specialized schedulers
+Dedicated MLOps infrastructure
+
+## The ML pipeline exists solely to demonstrate:
+Cross-team dependency orchestration
+Platform support for heterogeneous workloads
+Production Mapping (Conceptual)
+
+# Although this repository runs locally, it is designed to map cleanly to production Dagster deployments:
+Local Component	Production Equivalent
+Local Dagster	Dagster on Kubernetes / Dagster Cloud
+Docker Compose	Helm / Terraform
+Local executor	KubernetesJobExecutor / CeleryExecutor
+Mock data sources	S3 / GCS / External APIs
+Makefile	CI/CD pipelines
+These mappings are discussed in more detail in ARCHITECTURE.md.
+
+# Why This Exists
 This project exists to demonstrate:
-- Platform-level thinking
-- Team isolation patterns
-- Validation-driven data execution
-- Clear separation of concerns between platform and business logic
+Platform-level thinking
+Correct abstraction boundaries
+Validation-driven execution
+Team isolation and organizational scalability
+Judgment about what not to build
+It is intended to be read, reviewed, and discussed as a systems design and platform engineering artifact, not simply executed as a demo.
 
-It is meant to be read as a **systems design artifact**, not just executed.
-
-## Usage Notice
-
-This repository contains work samples for review purposes only.  
-Use requires explicit permission from the author.  
-Personal or educational use may be granted; commercial use is prohibited.  
-Please contact: ajohnson0764[at]gmail[dot]com
+# Usage Notice
+This repository contains work samples for review purposes only.
+Commercial use is prohibited
+Personal or educational use may be granted with permission
+Please contact:
+ajohnson0764 [at] gmail [dot] com
