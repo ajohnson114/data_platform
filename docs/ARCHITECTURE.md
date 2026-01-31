@@ -18,9 +18,27 @@ The following diagrams are referenced throughout this document:
 
 ---
 
-## Taking this to production
+## Taking This to Production
 
-Due to the author not wanting to pay to host or deploy this project it was built as a local first project meant to mock a production system but it can be translated to something more operational. Dagster in this project is split into 3 components, which will remain the same in a production environment. The webserver and daemon can have relatively small pods while the code location can be used to execute logic inside of the code location or dagser can be used with K8SJobExecutor which allows one to launch new pods for jobs or assets. For data sources, you can connect to SFTP servers, databases, external websites, API's and anything Python can connect to I believe. For the specifics modifications that would need to be to this project, you would potentially eplace duckdb with S3 as the IO manager and the local postgres with a cloud SQL database. 
+This project is built as a **local-first reference implementation** to mock a production data platform. It is intentionally constrained to run locally to avoid hosting and cloud costs but can be translated to a fully operational production environment.  
+
+Dagster in this project is split into three components, which can remain the same in production:
+
+1. **Webserver** – serves the Dagster UI; can run in a small pod.  
+2. **Daemon** – schedules and monitors jobs; can run in a small pod.  
+3. **Code location** – executes pipeline logic and assets; can leverage `K8sJobExecutor` to launch ephemeral pods for jobs or assets.
+
+Data sources in production could include SFTP servers, cloud databases, external APIs, or any Python-accessible data source.  
+
+Potential modifications to make this project production-ready include:  
+
+- Replacing **DuckDB** with **S3** as the IO manager.  
+- Replacing **local Postgres** with a managed **cloud SQL database**.  
+- Adding production-grade networking, secrets management, and CI/CD pipelines.
+
+This section signals that the platform design **anticipates production deployment** while keeping the demo fully local and cost-free.
+
+---
 
 ## Architectural Principles
 
@@ -234,6 +252,26 @@ In a production system, likely extensions would include:
 
 These capabilities are orthogonal to orchestration and can be layered incrementally without changing the core architecture.
 
+## Production Mapping (Local → Production)
+
+The following table shows how the local-first implementation can map to a production-ready environment:
+
+| Local Component        | Production Equivalent / Suggestion                     |
+|------------------------|--------------------------------------------------------|
+| Dagster Webserver      | Kubernetes deployment or Dagster Cloud UI             |
+| Dagster Daemon         | Small Kubernetes pod(s) for scheduling and monitoring |
+| Code Location          | gRPC server; can use `K8sJobExecutor` to launch pods for jobs/assets |
+| DuckDB                 | S3 / Data lake IO manager                               |
+| Local Postgres         | Managed cloud SQL database (Postgres, MySQL, etc.)    |
+| Mock data sources      | SFTP, external APIs, cloud DBs, or other Python-accessible sources |
+| Local Makefile / Compose| CI/CD pipelines (GitHub Actions, Jenkins, ArgoCD)     |
+
+**Notes:**
+- Webserver and daemon pods can remain lightweight, while compute-heavy jobs are executed in ephemeral pods via `K8sJobExecutor`.
+- This mapping preserves the **three-component structure** (Webserver, Daemon, Code Location) from the local demo, ensuring that production adoption is conceptually straightforward.
+- Security, monitoring, and secrets management would be added in production, but the core orchestration architecture remains unchanged.
+- Secrets and configs would be mounted as volumes in  respective subdirectories of the config directory in the code_locations via K8s ConfigMaps and Secrets. 
+
 ---
 
 ## Summary
@@ -244,3 +282,4 @@ This architecture prioritizes:
 - **Validation over convention**
 
 The result is a system that is easy to reason about, difficult to misuse, and safe to evolve as organizational complexity grows.
+
