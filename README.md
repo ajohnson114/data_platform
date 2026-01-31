@@ -1,12 +1,22 @@
-To use it immediately:
+# To use it immediately:
 
+Step 1) In your terminal enter and execute the below command:
 
+git clone https://github.com/ajohnson114/data_platform.git
 
-Hi All,
+Step 2) Enter move to the directory on your local computer with the following command (Linux based):
 
-Thanks for looking at my repo. This is a mock orchestration platform that can be used in a production setting. I spent a while coding it so I'm pushing it to early (prospective) testers to see initial reactions, and opinions. The below is a preliminary README that I'll be changing it in the near future but it exists in the event that I don't have the time in the future to amend this. At a high level though, this repo contains a web server that serves the UI to clients, a daemon server that handles run launching, scheduling, and more, 2 grpc servers that are mocks of use cases, in this case an ETL job and ML job, an I/O manager for passing data between tasks, and a SQL database used for tracking metadata of events and also for the ETL and ML jobs to interact with. It also has logging, schema definitions, data contracts, and ideally a simple design. I did a multi-platform docker build that should allow anyone on Linux or Arm (Apple Silicon, for example) to be able to pull the images and run the code quickly, the install takes about a minute and a half or so. To start the code all you have to do is pull the code, go to the code directory and type make into the terminal. Feel free to reach out with any questions or comments!
+cd ./data_platform
 
-Notes:
+Step 3) Enter the following command and let the application start up:
+
+make
+
+# Systems design
+
+To see more information about the architecture and some systems design discussion, please see the ARCHITECTURE.md in the docs directory.
+
+# Notes:
 
 1) Should you test the platform, please be advised that the etl_job puts data into the database that the ml_pipeline_job pulls and trains on and thus the etl job should be run before the ml_pipeline_job. More importantly, etl_job runs the ddl to make all database tables as a consequence of me not wanting to construct the tables when the database started up since that would add complexity to the project. If you try to run the ml_pipeline_job first, it will fail due to not having the table in the database primarily, but it would also fail the asset check due to not having any data there either. The failing job, was designed to show what happens during different types of failures, for instance an asset failing a blocking asset check, and thus can be run whenever.
 
@@ -23,7 +33,6 @@ The goal of this project is to demonstrate how a centralized orchestration layer
 This is a *platform*, not a pipeline.
 
 ---
-
 
 ## Why This Exists
 
