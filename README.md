@@ -14,6 +14,10 @@ Step 3) Enter the following command and let the application start up:
 
 make
 
+Step 4) Open a new tab and go to the following port on your computer:
+
+localhost:3000
+
 # Systems design
 
 To see more information about the architecture and some systems design discussion, please see the ARCHITECTURE.md in the docs directory.
