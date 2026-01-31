@@ -14,7 +14,7 @@ Step 3) Enter the following command and let the application start up:
 
 make
 
-Step 4) Open a new tab and go to the following port on your computer:
+Step 4) Open a new tab and go to the following port on your computer (Copy and paste it into your search bar and hit Enter):
 
 localhost:3000
 
