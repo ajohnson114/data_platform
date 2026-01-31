@@ -1,0 +1,10 @@
+load_from:
+  - grpc_server:
+      host: code_location_basic_ml
+      port: 4000
+      location_name: basic_ml_pipeline
+
+  - grpc_server:
+      host: code_location_etl
+      port: 4001
+      location_name: etl_pipeline

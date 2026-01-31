@@ -1,0 +1,111 @@
+services:
+  # -------------------------
+  # Postgres DB (Dagster metadata)
+  # -------------------------
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: dagster
+      POSTGRES_PASSWORD: dagster
+      POSTGRES_DB: dagster
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # -------------------------
+  # DuckDB IO Manager
+  # -------------------------
+  io_manager:
+    build:
+      context: ./dockerfiles
+      dockerfile: duckdb_io_manager.dockerfile
+    volumes:
+      - duckdb_data:/duckdb_io_manager
+
+  # -------------------------
+  # Code location: basic ML
+  # -------------------------
+  code_location_basic_ml:
+    build:
+      context: ../code_locations
+      dockerfile: ../deployment/dockerfiles/ml_pipeline.dockerfile
+    environment:
+      ENV: ${ENV:-dev}
+      DAGSTER_GRPC_PORT: 4000
+      DAGSTER_GRPC_HOST: 0.0.0.0
+      IO_MANAGER_PATH: /duckdb_io_manager/my_data.duckdb
+      DAGSTER_HOME: /dagster_home
+    volumes:
+      - duckdb_data:/duckdb_io_manager
+      - dagster_home:/dagster_home
+      - dagster_compute_logs:/dagster_compute_logs
+    ports:
+      - "4000:4000"
+    depends_on:
+      - postgres
+      - io_manager
+
+  # -------------------------
+  # Code location: ETL
+  # -------------------------
+  code_location_etl:
+    build:
+      context: ../code_locations
+      dockerfile: ../deployment/dockerfiles/etl_pipeline.dockerfile
+    environment:
+      ENV: ${ENV:-dev}
+      DAGSTER_GRPC_PORT: 4001
+      DAGSTER_GRPC_HOST: 0.0.0.0
+      IO_MANAGER_PATH: /duckdb_io_manager/my_data.duckdb
+      DAGSTER_HOME: /dagster_home
+    volumes:
+      - duckdb_data:/duckdb_io_manager
+      - dagster_home:/dagster_home
+      - dagster_compute_logs:/dagster_compute_logs
+    ports:
+      - "4001:4001"
+    depends_on:
+      - postgres
+      - io_manager
+
+  # -------------------------
+  # Dagster Daemon
+  # -------------------------
+  web:
+    build: 
+      context: .. 
+      dockerfile: deployment/dockerfiles/webserver.dockerfile
+    environment:
+      DAGSTER_HOME: /dagster_home
+      ENV: dev
+    volumes:
+      - dagster_home:/dagster_home   # ephemeral, container-managed
+      - dagster_compute_logs:/dagster_compute_logs
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - code_location_basic_ml
+      - code_location_etl
+
+  daemon:
+    build: 
+      context: .. 
+      dockerfile: deployment/dockerfiles/daemon.dockerfile
+    environment:
+      DAGSTER_HOME: /dagster_home
+      ENV: dev
+    volumes:
+      - dagster_home:/dagster_home
+      - dagster_compute_logs:/dagster_compute_logs
+    depends_on:
+      - postgres
+      - code_location_basic_ml
+      - code_location_etl
+
+volumes:
+  dagster_home: {}          # ephemeral
+  dagster_compute_logs: {}  # ephemeral
+  postgres_data: {}         # persistent Postgres metadata
+  duckdb_data: {}           # ephemeral DuckDB IO manager

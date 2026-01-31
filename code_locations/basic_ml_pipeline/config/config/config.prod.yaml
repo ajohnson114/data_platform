@@ -1,0 +1,40 @@
+dbs:
+  postgres:
+    host: postgres      # Docker Compose service name
+    port: 5432
+    db: dagster
+
+data_pipeline:
+  postgres: #this has all the info & queries that regard it
+    # Would normally make the tables all at once in a ddl 
+    # for the project but this is just a mock prod set up
+    read_from_etl_table: 'select * from etl_table'
+    etl_table_name: 'etl_table'
+    etl_insert_statement: |
+      INSERT INTO {0} (model_path, rmse, features)
+      VALUES (%s, %s, %s)
+    # table_name
+
+    ml_table_name: 'model_registry'
+    ml_insert_statement: |
+      INSERT INTO {0} (model_path, rmse, features) VALUES (:model_path, :rmse, :features)
+    # table_name
+    
+  asset_checks:
+    cols_required_to_not_have_nulls: ["x_1", "x_2", "x_3", "x_4", "y"]
+    expected_schema_from_etl_pipeline: 
+      x_1:
+        type: float
+        nullable: false
+      x_2:
+        type: float
+        nullable: false
+      x_3:
+        type: float
+        nullable: false
+      x_4:
+        type: float
+        nullable: false
+      y:
+        type: float
+        nullable: false

@@ -1,0 +1,48 @@
+run_storage:
+  module: dagster_postgres.run_storage
+  class: PostgresRunStorage
+  config:
+    postgres_db:
+      hostname: postgres
+      port: 5432
+      db_name: dagster
+      username: dagster
+      password: dagster
+    should_autocreate_tables: true
+
+event_log_storage:
+  module: dagster_postgres.event_log
+  class: PostgresEventLogStorage
+  config:
+    postgres_db:
+      hostname: postgres
+      port: 5432
+      db_name: dagster
+      username: dagster
+      password: dagster
+    should_autocreate_tables: true
+
+schedule_storage:
+  module: dagster_postgres.schedule_storage
+  class: PostgresScheduleStorage
+  config:
+    postgres_db:
+      hostname: postgres
+      port: 5432
+      db_name: dagster
+      username: dagster
+      password: dagster
+    should_autocreate_tables: true
+
+
+# -------------------------
+# Compute logs (filesystem)
+# -------------------------
+compute_logs:
+  module: dagster._core.storage.local_compute_log_manager
+  class: LocalComputeLogManager
+  config:
+    base_dir: /dagster_compute_logs
+
+telemetry:
+  enabled: false

@@ -1,0 +1,5 @@
+from .data_pipeline_checks import check_no_nulls_in_required_columns_failing_pipeline
+
+data_pipeline_asset_checks = [check_no_nulls_in_required_columns_failing_pipeline]
+
+all_asset_checks = [*data_pipeline_asset_checks]

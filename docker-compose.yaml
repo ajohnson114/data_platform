@@ -1,0 +1,104 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: dagster
+      POSTGRES_PASSWORD: dagster
+      POSTGRES_DB: dagster
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    mem_limit: 512m
+    cpus: "0.5"
+
+  io_manager:
+    image: ajohnson0764/data-platform-duckdb:1.0.0
+    volumes:
+      - duckdb_data:/duckdb_io_manager
+    mem_limit: 512m
+    cpus: "0.5"
+
+  code_location_basic_ml:
+    image: ajohnson0764/data-platform-ml:1.0.0
+    environment:
+      ENV: ${ENV:-dev}
+      DAGSTER_GRPC_PORT: 4000
+      DAGSTER_GRPC_HOST: 0.0.0.0
+      IO_MANAGER_PATH: /duckdb_io_manager/my_data.duckdb
+      DAGSTER_HOME: /dagster_home
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+    volumes:
+      - duckdb_data:/duckdb_io_manager
+      - dagster_home:/dagster_home
+      - dagster_compute_logs:/dagster_compute_logs
+    ports:
+      - "4000:4000"
+    depends_on:
+      - postgres
+      - io_manager
+    mem_limit: 1g
+    cpus: "1.0"
+
+  code_location_etl:
+    image: ajohnson0764/data-platform-etl:1.0.0
+    environment:
+      ENV: ${ENV:-dev}
+      DAGSTER_GRPC_PORT: 4001
+      DAGSTER_GRPC_HOST: 0.0.0.0
+      IO_MANAGER_PATH: /duckdb_io_manager/my_data.duckdb
+      DAGSTER_HOME: /dagster_home
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+    volumes:
+      - duckdb_data:/duckdb_io_manager
+      - dagster_home:/dagster_home
+      - dagster_compute_logs:/dagster_compute_logs
+    ports:
+      - "4001:4001"
+    depends_on:
+      - postgres
+      - io_manager
+    mem_limit: 1g
+    cpus: "1.0"
+
+  web:
+    image: ajohnson0764/data-platform-webserver:1.0.0
+    environment:
+      DAGSTER_HOME: /dagster_home
+      ENV: dev
+    volumes:
+      - dagster_home:/dagster_home
+      - dagster_compute_logs:/dagster_compute_logs
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - code_location_basic_ml
+      - code_location_etl
+    mem_limit: 256m
+    cpus: "0.25"
+
+  daemon:
+    image: ajohnson0764/data-platform-daemon:1.0.0
+    environment:
+      DAGSTER_HOME: /dagster_home
+      ENV: dev
+    volumes:
+      - dagster_home:/dagster_home
+      - dagster_compute_logs:/dagster_compute_logs
+    depends_on:
+      - postgres
+      - code_location_basic_ml
+      - code_location_etl
+    mem_limit: 256m
+    cpus: "0.25"
+
+volumes:
+  dagster_home: {}
+  dagster_compute_logs: {}
+  postgres_data: {}
+  duckdb_data: {}

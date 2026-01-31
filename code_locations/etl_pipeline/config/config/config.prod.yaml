@@ -1,0 +1,41 @@
+dbs:
+  postgres:
+    host: postgres      # Docker Compose service name
+    port: 5432
+    db: dagster
+
+data_pipeline:
+  postgres: #this has all the info & queries that regard it
+    # Would normally make the tables all at once in a ddl 
+    # for the project but this is just a mock prod set up
+    make_etl_table: |
+      CREATE TABLE IF NOT EXISTS etl_table (
+      id BIGSERIAL PRIMARY KEY,
+      x_1 DOUBLE PRECISION NOT NULL,
+      x_2 DOUBLE PRECISION NOT NULL,
+      x_3 DOUBLE PRECISION NOT NULL,
+      x_4 DOUBLE PRECISION NOT NULL,
+      y   DOUBLE PRECISION NOT NULL,
+      inserted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    make_ml_table: |
+      CREATE TABLE IF NOT EXISTS model_registry (
+      id BIGSERIAL PRIMARY KEY,
+      model_path TEXT NOT NULL,
+      rmse DOUBLE PRECISION NOT NULL,
+      features JSONB NOT NULL,
+      inserted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    etl_table_name: 'etl_table'
+    etl_insert_statement: |
+      INSERT INTO {0} (model_path, rmse, features)
+      VALUES (%s, %s, %s)
+    # table_name
+
+    ml_table_name: 'model_registry'
+    ml_insert_statement: |
+      INSERT INTO {0} (model_path, rmse, features) VALUES (%s, %s, %s)
+    # table_name
+  
+  asset_checks:
+    cols_required_to_not_have_nulls: ["x_1", "x_2", "x_3", "x_4", "y"]
