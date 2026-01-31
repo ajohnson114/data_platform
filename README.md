@@ -1,10 +1,12 @@
-# To use it immediately:
+# To use the platform immediately:
+
+Preliminary Step: To use this, you need to have docker desktop installed and open. A multi-platform build was done so arm and amd users should be able to access this demo. 
 
 Step 1) In your terminal enter and execute the below command:
 
 git clone https://github.com/ajohnson114/data_platform.git
 
-Step 2) Enter move to the directory on your local computer with the following command (Linux based):
+Step 2) Move to the directory on your local computer with the following command (Linux based):
 
 cd ./data_platform
 
