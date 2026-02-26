@@ -13,10 +13,8 @@ It shows how an organization can:
 
 Think of this project as:
 
-> 🧠 A platform design example  
-> 🏗️ Not just a single pipeline
-
-The focus is on **architecture and execution semantics**, not cloud infrastructure.
+> A platform design example for generalized orchestration tasks
+> Not just a single pipeline
 
 ---
 
