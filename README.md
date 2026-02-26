@@ -13,8 +13,8 @@ It shows how an organization can:
 
 Think of this project as:
 
-> A platform design example for generalized orchestration tasks
-> Not just a single pipeline
+- A platform design example for generalized orchestration tasks  
+- Not just a single pipeline
 
 ---
 
