@@ -13,8 +13,9 @@ It shows how an organization can:
 
 Think of this project as:
 
-- A platform design example for generalized orchestration tasks  
+- A platform design example for generalized orchestration tasks
 - Not just a single pipeline
+- A design that lets teams independently build and manage their own pipelines
 
 ---
 
