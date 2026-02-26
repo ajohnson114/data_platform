@@ -62,7 +62,7 @@ Each team:
 - Runs its own compute
 - Deploys independently
 
-👉 The control plane never runs business logic.
+The control plane never runs business logic.
 
 ---
 
