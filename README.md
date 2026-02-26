@@ -157,7 +157,7 @@ This repo runs locally but maps cleanly to production:
 | Local | Production |
 |------|-----------|
 | Docker Compose | Kubernetes / Helm |
-| Local executor | K8sJobExecutor / Celery |
+| Local executor | Code location / K8sJobExecutor / Celery |
 | DuckDB | S3 / data lake |
 | Local Postgres | Managed cloud SQL |
 | Makefile | CI/CD pipelines |
