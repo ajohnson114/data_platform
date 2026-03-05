@@ -1,64 +1,181 @@
-# Dagster Multi-Team Data Platform
+# Dagster Multi-Team Data Platform (Reference Implementation)
 
-A reference implementation of a production-style data orchestration platform built on Dagster. The goal is to demonstrate correct platform abstractions (but importantly not to prescribe specific infrastructure choices) so design decisions around executors, cost attribution, streaming, and scale are intentionally left open. The right answers depend on organizational context.
+## Overview
+
+This repository is a **reference implementation of a multi-team data orchestration platform built on Dagster**.
+
+It shows how an organization can:
+
+- Run **one centralized orchestration layer**
+- Allow **multiple teams to deploy independently**
+- Enforce **data validation before execution**
+- Maintain **clear ownership boundaries**
+- Integrate **real-time streaming alongside batch orchestration**
+
+Think of this project as:
+
+> A platform design example for generalized orchestration tasks
+> Not just a single pipeline
+
+The focus is on **architecture and execution semantics**, not cloud infrastructure.
 
 ---
 
-## Architecture
+## Architecture Diagrams
 
-[![System Design](docs/platform_sys_design.png)](docs/platform_sys_design.png)
+**System design overview**
 
-The platform separates two concerns:
+![System Design](docs/platform_sys_design.png)
 
-**Control plane** (central Dagster daemon + webserver) handles scheduling, dependency resolution, run tracking, and observability. It never runs business logic.
+**Asset execution and validation model**
 
-**Execution plane** (team code locations) is where compute happens. Each team owns its assets, its checks, and its deployment lifecycle independently.
-
-This boundary is the core invariant that makes multi-team scaling work. A bad deploy or runtime failure in one team's code location cannot affect another team's pipelines.
+![Asset Execution Model](docs/asset_execution_model.png)
 
 ---
 
-## Asset execution and validation
+## What This Demonstrates
 
-[![Asset Execution Model](docs/asset_execution_model.png)](docs/asset_execution_model.png)
+This platform demonstrates how to:
 
-Asset checks are first-class execution gates, not optional monitoring. Downstream assets will not run unless upstream checks pass — bad data cannot flow silently through the platform.
+- Isolate teams using separate code locations
+- Enforce asset checks as hard execution gates
+- Keep orchestration centralized but compute decentralized
+- Prevent one team's failure from breaking others
+- Provide a clean path from local development to production
+- Integrate streaming infrastructure (Kafka + PySpark) with batch orchestration (Dagster)
+- Use Dagster sensors for event-driven materialization of streaming data
 
-Checks are config-driven:
+---
 
-```yaml
-asset_checks:
-  cols_required_to_not_have_nulls: ["x_1", "x_2", "x_3", "x_4", "y"]
-  expected_schema_from_etl_pipeline:
-    x_1: { type: float, nullable: false }
-    x_2: { type: float, nullable: false }
-    x_3: { type: float, nullable: false }
-    x_4: { type: float, nullable: false }
-    y:   { type: float, nullable: false }
+## Mental Model
+
+### Control Plane (central Dagster daemon & webserver)
+
+Responsible for:
+
+- Scheduling
+- Dependency resolution
+- Run tracking
+- Observability
+
+### Execution Plane (team code locations)
+
+Each team:
+
+- Owns its assets
+- Owns its checks
+- Runs its own compute
+- Deploys independently
+
+The control plane never runs business logic.
+
+---
+
+## Streaming Architecture
+
+### Data Flow
+
+```text
+CoinGecko API --> Kafka Producer --> Kafka (KRaft) --> PySpark Structured Streaming --> Postgres (staging)
+                                                                                            |
+                                                                          Dagster Sensor (polls every 60s)
+                                                                                            |
+                                                                          crypto_prices_snapshot asset
+                                                                                            |
+                                                                                    DuckDB (via IO manager)
 ```
 
-This drives schema drift detection automatically — if an upstream asset changes its output schema, the check fails before downstream work executes. Statistical drift detection can be layered on top by querying the warehouse for distribution statistics and asserting against a baseline inside an asset check.
+### How It Works
+
+1. A **Kafka producer** fetches live crypto prices (BTC, ETH, SOL, ADA, DOT) from the CoinGecko API every 30 seconds and publishes them to a Kafka topic
+2. A **PySpark Structured Streaming** job consumes from Kafka and writes micro-batches to a Postgres staging table via JDBC
+3. A **Dagster sensor** in the ETL code location polls the Postgres table every 60 seconds. When new rows are detected, it triggers the `streaming_ingest_job`
+4. The `crypto_prices_snapshot` asset reads from Postgres and materializes the data into DuckDB through the shared IO manager
+
+Streaming is handled entirely by Spark. Dagster's role is to observe the staging table and orchestrate the final materialization, not to manage the stream itself.
+
+### Components
+
+| Container | Role | Image |
+|-----------|------|-------|
+| `kafka` | KRaft-mode broker (no Zookeeper) | `apache/kafka:3.8.1` |
+| `kafka_producer` | CoinGecko API poller, publishes to Kafka | Custom (Python + confluent-kafka) |
+| `spark_consumer` | Structured Streaming: Kafka to Postgres | Custom (PySpark 3.5.4) |
+
+### Production Note: Change Data Capture at Scale
+
+This demo uses a simple API-to-Kafka producer pattern. In a production environment with high-volume streaming workloads, the architecture would extend to a full CDC pipeline:
+
+```text
+Source DB --> Debezium CDC --> Kafka (raw topic) --> staging table
+                                                        |
+                                                    Dagster (validate, transform, enrich)
+                                                        |
+                                                    Kafka (clean topic) --> final table
+```
+
+Each stage in this pipeline is independently buffered. Debezium captures row-level changes without polling the source database. The staging table absorbs burst writes so that Dagster can process at its own pace. Publishing back to Kafka after transformation gives downstream consumers a clean, validated stream and decouples the processing speed from the ingestion rate.
+
+This matters because in production the source stream may produce millions of events per minute. Without this staged decoupling, a slow transformation step would backpressure the entire pipeline. With it, each component scales independently and failures at one stage do not cascade to others.
 
 ---
 
-## Repository structure
+## Key Guarantees
 
-```
+The platform enforces three core invariants:
+
+### 1. Team Isolation
+
+A failure in one team's code cannot stop another team's pipelines.
+
+### 2. Validation-Gated Execution
+
+Downstream assets **will not run** unless upstream checks pass.
+
+Bad data cannot silently flow downstream.
+
+### 3. Clear Ownership
+
+Every asset and check has exactly one owning team.
+
+No hidden coupling.
+
+---
+
+## Repository Structure
+
+```text
 code_locations/
-  team_a/       # Team A — owns its assets, checks, and compute
-  team_b/       # Team B — owns its assets, checks, and compute
-  shared/       # Shared utilities available to all teams
-deployment/     # Deployment configuration
-workspace.yaml  # Registers all code locations with Dagster
+  etl_pipeline/          # ETL team: batch ingest, streaming sensor, crypto materialization
+  basic_ml_pipeline/     # ML team: model training and registry
+  shared/                # Shared resources (DuckDB IO manager, DB client)
+kafka_producer/          # Standalone Kafka producer (CoinGecko API)
+spark_consumer/          # PySpark Structured Streaming consumer
+deployment/
+  docker-compose.yaml    # Local dev compose (builds from source)
+  dockerfiles/           # All Dockerfiles
+  workspace.yaml         # Dagster code location registry
+  dagster.yaml           # Dagster instance config
+docker-compose.yaml      # Production compose (pre-built images)
+Makefile                 # Dev commands
 ```
 
-Adding a new team means adding a folder under `code_locations/` and registering it in `workspace.yaml`. No changes to existing teams required.
+- Each folder under `code_locations/` is a **team deployment unit**
+- `shared/` contains reusable utilities
+- `kafka_producer/` and `spark_consumer/` are standalone applications, not Dagster code locations
+- Teams can be added without modifying existing teams
 
 ---
 
-## Quick start (local)
+## Quick Start (Local)
 
-**Prerequisites:** Docker Desktop, Git, macOS or Linux
+### Prerequisites
+
+- Docker Desktop
+- Git
+- macOS or Linux
+
+### Run the platform
 
 ```bash
 git clone https://github.com/ajohnson114/data_platform.git
@@ -66,39 +183,71 @@ cd data_platform
 make
 ```
 
-Open the Dagster UI at `http://localhost:3000`.
+Open the Dagster UI:
 
-Two example jobs are included:
-
-- **`etl_job`** — creates tables, loads mock data, runs schema and null checks
-- **`ml_pipeline_job`** — depends on ETL outputs, intentionally fails if upstream checks have not passed
-
-Some failures are intentional. The point is to show validation gating and failure isolation in action, not a clean green run.
+http://localhost:3000
 
 ---
 
-## Production mapping
+## Example Execution Behavior
+
+### `etl_job`
+
+- Creates database tables
+- Loads mock data
+
+### `ml_pipeline_job`
+
+- Depends on ETL outputs
+- Intentionally fails if prerequisites are missing
+
+### `streaming_ingest_job`
+
+- Triggered automatically by the `crypto_price_sensor`
+- Reads crypto prices from Postgres (written by Spark) and materializes to DuckDB
+- Runs whenever new streaming data is detected
+
+Some failures are intentional and part of the demo.
+
+---
+
+## Production Mapping (Conceptual)
+
+This repo runs locally but maps cleanly to production:
 
 | Local | Production |
-|-------|------------|
+|------|-----------|
 | Docker Compose | Kubernetes / Helm |
-| Local executor | K8sJobExecutor or CeleryExecutor |
-| DuckDB | S3 / data lake / cloud warehouse |
+| Local executor | K8sJobExecutor / Celery |
+| DuckDB | S3 / data lake |
 | Local Postgres | Managed cloud SQL |
 | Makefile | CI/CD pipelines |
+| Single Kafka broker (KRaft) | Multi-broker Kafka cluster |
+| CoinGecko API producer | Debezium CDC connectors |
+| PySpark local[*] | Spark on YARN / K8s |
 
-A few production decisions worth noting explicitly:
-
-**Secrets and config** are injected via Kubernetes Secrets and read-only ConfigMaps mounted into containers at known paths. Application code reads from those paths. No environment-specific logic lives in the codebase and no secrets are baked into image layers.
-
-**Backfills** use Dagster's native partition system. Assets are defined with partition configs and backfills are triggered against specific partition ranges through the Dagster UI or API — idempotent and resumable without custom tooling.
-
-**Executor choice** between K8sJobExecutor, CeleryExecutor, and others is a deployment decision left intentionally unspecified. The platform abstractions are the same regardless of which executor runs underneath.
-
-**Streaming** is out of scope here. A platform serving real-time use cases would add a streaming layer (Kafka + Flink or Spark Streaming) alongside the batch layer. The Dagster orchestration layer would remain responsible for batch and scheduled work.
+The architecture is designed so production hardening can be added **without changing core abstractions**.
 
 ---
 
-## Contact
+## Why This Exists
 
+This project is meant to demonstrate:
+
+- Platform-level thinking
+- Correct abstraction boundaries
+- Multi-team scalability patterns
+- Validation-driven data systems
+- Streaming and batch integration patterns
+
+---
+
+## Usage Notice
+
+This repository contains work samples for review purposes only.
+
+- Commercial use is prohibited
+- Personal or educational use may be granted with permission
+
+**Contact:**
 ajohnson0764 [at] gmail [dot] com
