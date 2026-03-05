@@ -50,3 +50,19 @@ docker buildx build \
   -t $USER/data-platform-duckdb:$VERSION \
   --push \
   .
+
+# Kafka producer
+docker buildx build \
+  --platform $PLATFORMS \
+  -f deployment/dockerfiles/kafka_producer.dockerfile \
+  -t $USER/data-platform-kafka-producer:$VERSION \
+  --push \
+  .
+
+# Spark consumer
+docker buildx build \
+  --platform $PLATFORMS \
+  -f deployment/dockerfiles/spark_consumer.dockerfile \
+  -t $USER/data-platform-spark-consumer:$VERSION \
+  --push \
+  .

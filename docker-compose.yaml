@@ -65,6 +65,54 @@ services:
     mem_limit: 1g
     cpus: "1.0"
 
+  kafka:
+    image: apache/kafka:3.8.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS: 24
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    ports:
+      - "9092:9092"
+    mem_limit: 512m
+    cpus: "0.5"
+
+  kafka_producer:
+    image: ajohnson0764/data-platform-kafka-producer:1.0.0
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: financial_data
+      POLL_INTERVAL_SECONDS: "30"
+    depends_on:
+      - kafka
+    restart: on-failure
+    mem_limit: 256m
+    cpus: "0.25"
+
+  spark_consumer:
+    image: ajohnson0764/data-platform-spark-consumer:1.0.0
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: financial_data
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: dagster
+      POSTGRES_USER: dagster
+      POSTGRES_PASSWORD: dagster
+      POSTGRES_TABLE: crypto_prices
+      CHECKPOINT_DIR: /tmp/spark_checkpoints/crypto_prices
+    depends_on:
+      - kafka
+      - postgres
+    mem_limit: 2g
+    cpus: "1.5"
+
   web:
     image: ajohnson0764/data-platform-webserver:1.0.0
     environment:
