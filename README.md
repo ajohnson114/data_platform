@@ -1,6 +1,6 @@
 # Dagster Multi-Team Data Platform (Reference Implementation)
 
-## Overview
+A reference implementation of a production-style data orchestration platform built on Dagster. The goal is to demonstrate correct platform abstractions (but importantly not to prescribe specific infrastructure choices) so design decisions around executors, cost attribution, streaming, and scale are intentionally left open. The right answers depend on organizational context.
 
 This repository is a **reference implementation of a multi-team data orchestration platform built on Dagster**.
 
@@ -69,7 +69,7 @@ Each team:
 
 The control plane never runs business logic.
 
----
+**Execution plane** (team code locations) is where compute happens. Each team owns its assets, its checks, and its deployment lifecycle independently.
 
 ## Streaming Architecture
 
@@ -136,7 +136,7 @@ In this design, a lightweight stream processor (Faust, Kafka Streams, or Spark S
 
 The two patterns are not mutually exclusive. A production platform often runs both: the stream processor handles the real-time path while Dagster manages the batch/analytical path and provides observability across the whole system.
 
----
+Asset checks are first-class execution gates, not optional monitoring. Downstream assets will not run unless upstream checks pass — bad data cannot flow silently through the platform.
 
 ## Key Guarantees
 
