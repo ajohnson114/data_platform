@@ -25,7 +25,7 @@ The focus is on **architecture and execution semantics**, not cloud infrastructu
 
 **System design overview**
 
-![System Design](docs/platform_sys_design.png)
+![System Design](docs/sys_design_with_streaming.png)
 
 **Asset execution and validation model**
 
@@ -73,18 +73,6 @@ The control plane never runs business logic.
 
 ## Streaming Architecture
 
-### Data Flow
-
-```text
-CoinGecko API --> Kafka Producer --> Kafka (KRaft) --> PySpark Structured Streaming --> Postgres (staging)
-                                                                                            |
-                                                                          Dagster Sensor (polls every 60s)
-                                                                                            |
-                                                                          crypto_prices_snapshot asset
-                                                                                            |
-                                                                                    DuckDB (via IO manager)
-```
-
 ### How It Works
 
 1. A **Kafka producer** fetches live crypto prices (BTC, ETH, SOL, ADA, DOT) from the CoinGecko API every 30 seconds and publishes them to a Kafka topic
@@ -117,6 +105,24 @@ Source DB --> Debezium CDC --> Kafka (raw topic) --> staging table
 Each stage in this pipeline is independently buffered. Debezium captures row-level changes without polling the source database. The staging table absorbs burst writes so that Dagster can process at its own pace. Publishing back to Kafka after transformation gives downstream consumers a clean, validated stream and decouples the processing speed from the ingestion rate.
 
 This matters because in production the source stream may produce millions of events per minute. Without this staged decoupling, a slow transformation step would backpressure the entire pipeline. With it, each component scales independently and failures at one stage do not cascade to others.
+
+### Latency Considerations
+
+The CDC pattern above is designed for **near-real-time** workloads where processing within a few minutes is acceptable. Dagster sensors poll on an interval (seconds to minutes), and each triggered run has scheduling and startup overhead. This is the right fit for analytics, warehousing, and most data platform use cases.
+
+For **sub-second latency** requirements (live dashboards, fraud detection, real-time pricing), Dagster should not be in the hot path. In that case, the transform layer would be a dedicated stream processor:
+
+```text
+Source DB --> Debezium CDC --> Kafka (raw) --> Faust / Kafka Streams / Spark Streaming (transform)
+                                                        |
+                                                  Kafka (clean) --> final table / real-time consumers
+                                                        |
+                                                  Dagster (periodic audit, reconciliation, monitoring)
+```
+
+In this design, a lightweight stream processor (Faust, Kafka Streams, or Spark Structured Streaming) handles validation and transformation continuously with millisecond-level latency. Kafka acts as the sole transport between stages. Dagster steps back from the hot path entirely and instead runs periodic audits — reconciling counts between the raw and clean topics, detecting drift, flagging anomalies, and materializing aggregated snapshots to the warehouse on a schedule.
+
+The two patterns are not mutually exclusive. A production platform often runs both: the stream processor handles the real-time path while Dagster manages the batch/analytical path and provides observability across the whole system.
 
 ---
 
