@@ -26,4 +26,4 @@ RUN chown -R spark:spark /app /opt/spark/jars
 USER spark
 WORKDIR /app
 
-CMD ["spark-submit", "--master", "local[*]", "/app/consumer.py"]
+CMD ["/opt/spark/bin/spark-submit", "--master", "local[*]", "/app/consumer.py"]
