@@ -2,7 +2,7 @@ import os
 import time
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, from_json, current_timestamp
+from pyspark.sql.functions import col, from_json, current_timestamp, to_timestamp
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType
 
 # -------------------------
@@ -70,8 +70,8 @@ def write_batch_to_postgres(batch_df, batch_id):
     if batch_df.isEmpty():
         return
 
-    # Rename timestamp -> event_timestamp for the Postgres schema
-    write_df = batch_df.withColumnRenamed("timestamp", "event_timestamp")
+    # Cast and rename timestamp -> event_timestamp for the Postgres schema
+    write_df = batch_df.withColumn("event_timestamp", to_timestamp(col("timestamp"))).drop("timestamp")
 
     (
         write_df.write
