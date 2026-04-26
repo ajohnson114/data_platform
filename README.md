@@ -11,6 +11,7 @@ It shows how an organization can:
 - Enforce **data validation before execution**
 - Maintain **clear ownership boundaries**
 - Integrate **real-time streaming alongside batch orchestration**
+- Query live data using **natural language via an LLM-powered analytics interface**
 
 Think of this project as:
 
@@ -31,6 +32,10 @@ The focus is on **architecture and execution semantics**, not cloud infrastructu
 
 ![Asset Execution Model](docs/asset_execution_model.png)
 
+**Conversational analytics interface (NL-to-SQL)**
+
+![Conversational Analytics Interface](docs/conversational.png)
+
 ---
 
 ## What This Demonstrates
@@ -44,6 +49,7 @@ This platform demonstrates how to:
 - Provide a clean path from local development to production
 - Integrate streaming infrastructure (Kafka + PySpark) with batch orchestration (Dagster)
 - Use Dagster sensors for event-driven materialization of streaming data
+- Expose materialized data through a natural language query interface backed by an LLM
 
 ---
 
@@ -157,6 +163,8 @@ code_locations/
   shared/                # Shared resources (DuckDB IO manager, DB client)
 kafka_producer/          # Standalone Kafka producer (CoinGecko API)
 spark_consumer/          # PySpark Structured Streaming consumer
+services/
+  analytics_api/         # NL-to-SQL service: FastAPI + Gradio UI (optional)
 deployment/
   docker-compose.yaml    # Local dev compose (builds from source)
   dockerfiles/           # All Dockerfiles
@@ -169,6 +177,7 @@ Makefile                 # Dev commands
 - Each folder under `code_locations/` is a **team deployment unit**
 - `shared/` contains reusable utilities
 - `kafka_producer/` and `spark_consumer/` are standalone applications, not Dagster code locations
+- `services/` contains optional platform-level services that are not Dagster code locations
 - Teams can be added without modifying existing teams
 
 ---
@@ -186,12 +195,31 @@ Makefile                 # Dev commands
 ```bash
 git clone https://github.com/ajohnson114/data_platform.git
 cd data_platform
-make
+make dev
 ```
 
 Open the Dagster UI:
 
 http://localhost:3000
+
+### Run with the NL-to-SQL analytics interface
+
+```bash
+make dev-nl2sql
+```
+
+This starts the full platform plus the analytics service. Open the query interface at:
+
+http://localhost:7860
+
+Select your LLM provider (OpenAI or Anthropic), choose a model, and paste your API key directly into the UI — no environment variables required. Once the streaming pipeline has been running for a few minutes, you can ask natural language questions against the live crypto price data:
+
+- *What is the latest price for each coin?*
+- *Which coin has the highest USD price right now?*
+- *Show me all Bitcoin prices from the last hour*
+- *How does the Ethereum price in USD compare to EUR over time?*
+- *What was the highest Solana price recorded today?*
+- *Rank all coins by their most recent USD price*
 
 ---
 
@@ -245,6 +273,7 @@ This project is meant to demonstrate:
 - Multi-team scalability patterns
 - Validation-driven data systems
 - Streaming and batch integration patterns
+- LLM integration as a platform-level capability on top of orchestrated data
 
 ---
 

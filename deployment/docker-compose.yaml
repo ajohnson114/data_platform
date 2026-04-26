@@ -161,6 +161,24 @@ services:
       - code_location_basic_ml
       - code_location_etl
 
+  # -------------------------
+  # NL-to-SQL analytics interface
+  # -------------------------
+  analytics_api:
+    build:
+      context: ../services/analytics_api
+      dockerfile: ../../deployment/dockerfiles/analytics_api.dockerfile
+    profiles: ["nl2sql"]
+    environment:
+      DUCKDB_PATH: /duckdb_io_manager/my_data.duckdb
+    volumes:
+      - duckdb_data:/duckdb_io_manager
+    ports:
+      - "8000:8000"
+      - "7860:7860"
+    depends_on:
+      - io_manager
+
 volumes:
   dagster_home: {}          # ephemeral
   dagster_compute_logs: {}  # ephemeral

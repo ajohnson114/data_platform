@@ -145,6 +145,21 @@ services:
     mem_limit: 256m
     cpus: "0.25"
 
+  analytics_api:
+    image: ajohnson0764/data-platform-analytics-api:1.0.0
+    profiles: ["nl2sql"]
+    environment:
+      DUCKDB_PATH: /duckdb_io_manager/my_data.duckdb
+    volumes:
+      - duckdb_data:/duckdb_io_manager
+    ports:
+      - "8000:8000"
+      - "7860:7860"
+    depends_on:
+      - io_manager
+    mem_limit: 512m
+    cpus: "0.5"
+
 volumes:
   dagster_home: {}
   dagster_compute_logs: {}
