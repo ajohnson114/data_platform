@@ -182,6 +182,31 @@ Makefile                 # Dev commands
 
 ---
 
+## Environment Configuration
+
+Each code location manages its own environment-scoped config and secrets, loaded at runtime based on the `ENV` variable set by the Makefile (`dev`, `uat`, `prod`).
+
+```text
+code_locations/
+  etl_pipeline/config/
+    config/
+      config.dev.yaml    # DB connection details, SQL, asset check params
+      config.uat.yaml
+      config.prod.yaml
+    secrets/
+      secrets.dev.yaml   # DB credentials
+      secrets.uat.yaml
+      secrets.prod.yaml
+  basic_ml_pipeline/config/
+    (same structure)
+```
+
+Config files contain non-sensitive runtime parameters (hostnames, table names, SQL statements). Secrets files contain credentials. The split mirrors how a production system would separate config management from secret management (e.g. Helm values vs. Kubernetes Secrets or Vault).
+
+Running `make dev` (can be shorthanded as `make`), `make uat`, or `make prod` injects the correct `ENV` value into each container, which loads the corresponding file pair at startup.
+
+---
+
 ## Quick Start (Local)
 
 ### Prerequisites
@@ -195,7 +220,7 @@ Makefile                 # Dev commands
 ```bash
 git clone https://github.com/ajohnson114/data_platform.git
 cd data_platform
-make dev
+make
 ```
 
 Open the Dagster UI:
