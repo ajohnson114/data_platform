@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+openai
+anthropic
+duckdb
+pydantic
+gradio
+requests

@@ -20,6 +20,8 @@ data_pipeline:
       INSERT INTO {0} (model_path, rmse, features) VALUES (:model_path, :rmse, :features)
     # table_name
     
+  fs_io_manager_base_dir: "/app/fs_storage"
+
   asset_checks:
     cols_required_to_not_have_nulls: ["x_1", "x_2", "x_3", "x_4", "y"]
     expected_schema_from_etl_pipeline: 

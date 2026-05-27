@@ -27,7 +27,7 @@ def pull_data_from_postgres(context) -> pd.DataFrame:
 
     return df
 
-@asset(group_name='ml_pipeline')
+@asset(group_name='ml_pipeline', io_manager_key="fs_io_manager")
 def fit_model(context, pull_data_from_postgres: pd.DataFrame) -> dict:
     df = pull_data_from_postgres
     X = df[[col for col in df.columns if col.startswith("x_")]]
@@ -48,7 +48,7 @@ def fit_model(context, pull_data_from_postgres: pd.DataFrame) -> dict:
     return {"model": model, "features": X.columns.tolist(), "rmse": rmse}
 
 @asset(group_name='ml_pipeline',required_resource_keys={"ml_postgres"})
-def save_model(context, fit_model: dict):
+def save_model(context, fit_model: dict) -> None:
     # model = fit_model["model"]
     features = fit_model["features"]
     rmse = fit_model["rmse"]

@@ -37,5 +37,10 @@ data_pipeline:
       INSERT INTO {0} (model_path, rmse, features) VALUES (%s, %s, %s)
     # table_name
 
+  streaming:
+    crypto_table_name: 'crypto_prices'
+    read_crypto_prices: |
+      SELECT coin, usd, eur, event_timestamp FROM crypto_prices
+
   asset_checks:
     cols_required_to_not_have_nulls: ["x_1", "x_2", "x_3", "x_4", "y"]

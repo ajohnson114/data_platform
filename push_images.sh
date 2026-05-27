@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
+cd "$(dirname "$0")"
+
 USER=ajohnson0764
 VERSION=1.0.0
 PLATFORMS=linux/amd64,linux/arm64
@@ -50,3 +52,27 @@ docker buildx build \
   -t $USER/data-platform-duckdb:$VERSION \
   --push \
   .
+
+# Kafka producer
+docker buildx build \
+  --platform $PLATFORMS \
+  -f deployment/dockerfiles/kafka_producer.dockerfile \
+  -t $USER/data-platform-kafka-producer:$VERSION \
+  --push \
+  .
+
+# Spark consumer
+docker buildx build \
+  --platform $PLATFORMS \
+  -f deployment/dockerfiles/spark_consumer.dockerfile \
+  -t $USER/data-platform-spark-consumer:$VERSION \
+  --push \
+  .
+
+# Analytics API (NL-to-SQL + Gradio UI)
+docker buildx build \
+  --platform $PLATFORMS \
+  -f deployment/dockerfiles/analytics_api.dockerfile \
+  -t $USER/data-platform-analytics-api:$VERSION \
+  --push \
+  ./services/analytics_api

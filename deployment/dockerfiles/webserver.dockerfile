@@ -12,10 +12,10 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 RUN pip install --no-cache-dir \
-    dagster==1.12.12 \
-    dagit==1.12.12 \
-    dagster-postgres==0.28.12 \
-    dagster-duckdb==0.28.12
+    dagster==1.13.6 \
+    dagster-webserver==1.13.6 \
+    dagster-postgres==0.29.6 \
+    dagster-duckdb==0.29.6
     
 # Copy Dagster workspace
 COPY deployment/workspace.yaml .

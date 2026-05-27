@@ -62,6 +62,12 @@ class _Config:
     def get_etl_table_name(self):
         return self.config['data_pipeline']['postgres']['etl_table_name']
     
+    def get_crypto_table_name(self):
+        return self.config['data_pipeline']['streaming']['crypto_table_name']
+
+    def get_read_crypto_prices(self):
+        return self.config['data_pipeline']['streaming']['read_crypto_prices']
+
     def get_cols_required_to_not_have_nulls(self):
         return self.config['data_pipeline']['asset_checks']['cols_required_to_not_have_nulls']
     

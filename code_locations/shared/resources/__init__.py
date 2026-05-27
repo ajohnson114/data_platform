@@ -9,4 +9,4 @@ duckdb_io_manager = duckdb_pandas_io_manager.configured({
 })
 
 # I want all of the code locations to use the same io manager
-global_resources = {'duckdb_io_manager': duckdb_io_manager}
+global_resources = {'io_manager': duckdb_io_manager}

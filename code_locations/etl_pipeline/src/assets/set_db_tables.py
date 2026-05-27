@@ -3,7 +3,7 @@ from sqlalchemy import text
 from config.config import get_config
 
 @asset(group_name='db_setup',required_resource_keys={"etl_postgres"})
-def prepare_postgres_tables(context):
+def prepare_postgres_tables(context) -> None:
     etl_postgres = context.resources.etl_postgres
 
     with etl_postgres.get_engine().begin() as conn:
