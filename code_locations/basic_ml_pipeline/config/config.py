@@ -67,3 +67,6 @@ class _Config:
     
     def get_expected_schema_from_etl_pipeline(self):
         return self.config['data_pipeline']['asset_checks']['expected_schema_from_etl_pipeline']
+
+    def get_fs_io_manager_base_dir(self):
+        return self.config['data_pipeline']['fs_io_manager_base_dir']

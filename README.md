@@ -1,94 +1,72 @@
-# Dagster Multi-Team Data Platform (Reference Implementation)
+# Data Platform — Multi-Service Orchestration with Dagster
 
-## Overview
+A local-first data platform that runs **Kafka, Spark, Postgres, DuckDB, and Dagster** in a single `make` command. Designed as a reference implementation for multi-team data orchestration — not a single pipeline, but a platform where multiple teams deploy independently, validate each other's outputs at boundaries, and react to data as it arrives.
 
-This repository is a **reference implementation of a multi-team data orchestration platform built on Dagster**.
+## Contents
 
-It shows how an organization can:
-
-- Run **one centralized orchestration layer**
-- Allow **multiple teams to deploy independently**
-- Enforce **data validation before execution**
-- Maintain **clear ownership boundaries**
-- Integrate **real-time streaming alongside batch orchestration**
-- Query live data using **natural language via an LLM-powered analytics interface**
-
-Think of this project as:
-
-> A platform design example for generalized orchestration tasks
-> Not just a single pipeline
-
-The focus is on **architecture and execution semantics**, not cloud infrastructure.
+- [What This Runs](#what-this-runs)
+- [Streaming Pipeline](#streaming-pipeline)
+- [Validation-Gated Execution](#validation-gated-execution)
+- [Architecture](#architecture)
+- [Repository Structure](#repository-structure)
+- [Environment Configuration](#environment-configuration)
+- [Design Decisions](#design-decisions)
+- [Production Mapping](#production-mapping)
+- [Quick Start](#quick-start)
+- [Example Execution Behavior](#example-execution-behavior)
+- [Usage Notice](#usage-notice)
 
 ---
 
-## Architecture Diagrams
+## What This Runs
 
-**System design overview**
+```
+make
+# → spins up 10 containerized services
+# → opens Dagster UI at http://localhost:3000
+```
 
-![System Design](docs/sys_design_with_streaming.png)
+| Service | Role |
+|---|---|
+| **Kafka** | Message broker for streaming financial data |
+| **Kafka Producer** | Polls crypto price data and publishes to Kafka |
+| **Spark Consumer** | Reads from Kafka via Structured Streaming, writes to Postgres |
+| **Postgres** | Stores streaming data + Dagster run metadata |
+| **DuckDB IO Manager** | Shared analytical store across code locations |
+| **Dagster Webserver** | UI and API layer (control plane) |
+| **Dagster Daemon** | Scheduling, sensors, and run queue (control plane) |
+| **ETL Code Location** | Team-owned pipeline: pulls, validates, cleans, and loads data |
+| **ML Code Location** | Team-owned pipeline: validates ETL output schema, then runs downstream modeling |
+| **Analytics API** | NL-to-SQL interface over the DuckDB warehouse (optional, `dev-nl2sql` profile) |
 
-**Asset execution and validation model**
-
-![Asset Execution Model](docs/asset_execution_model.png)
-
-**Conversational analytics interface (NL-to-SQL)**
-
-![Conversational Analytics Interface](docs/conversational.png)
-
----
-
-## What This Demonstrates
-
-This platform demonstrates how to:
-
-- Isolate teams using separate code locations
-- Enforce asset checks as hard execution gates
-- Keep orchestration centralized but compute decentralized
-- Prevent one team's failure from breaking others
-- Provide a clean path from local development to production
-- Integrate streaming infrastructure (Kafka + PySpark) with batch orchestration (Dagster)
-- Use Dagster sensors for event-driven materialization of streaming data
-- Expose materialized data through a natural language query interface backed by an LLM
+All images are pre-built and published to Docker Hub — no local builds required.
 
 ---
 
-## Mental Model
+## Streaming Pipeline
 
-### Control Plane (central Dagster daemon & webserver)
+The platform includes a real streaming data path:
 
-Responsible for:
+```
+Crypto API → Kafka Producer → Kafka → Spark Structured Streaming → Postgres → Dagster Asset → DuckDB
+```
 
-- Scheduling
-- Dependency resolution
-- Run tracking
-- Observability
+The Kafka producer polls crypto prices every 30 seconds. Spark reads the stream via Structured Streaming and writes to Postgres. A Dagster sensor (`crypto_price_sensor`) watches the Postgres table every 60 seconds using cursor-based state tracking — when it detects new rows, it automatically triggers the `streaming_ingest_job`, which materializes the data into DuckDB through the `crypto_prices_snapshot` asset.
 
-### Execution Plane (team code locations)
+This means the entire path from external API to analytical store is automated and event-driven. No schedules, no manual triggers — the sensor reacts to data as it arrives.
 
-Each team:
+```python
+@sensor(job_name="streaming_ingest_job", minimum_interval_seconds=60,
+        default_status=DefaultSensorStatus.RUNNING)
+def crypto_price_sensor(context: SensorEvaluationContext):
+    # Cursor-based: only triggers when row count increases
+    last_count = int(context.cursor) if context.cursor else 0
+    if current_count > last_count:
+        context.update_cursor(str(current_count))
+        yield RunRequest(run_key=f"crypto_ingest_{current_count}")
+```
 
-- Owns its assets
-- Owns its checks
-- Runs its own compute
-- Deploys independently
-
-The control plane never runs business logic.
-
----
-
-## Streaming Architecture
-
-### How It Works
-
-1. A **Kafka producer** fetches live crypto prices (BTC, ETH, SOL, ADA, DOT) from the CoinGecko API every 30 seconds and publishes them to a Kafka topic
-2. A **PySpark Structured Streaming** job consumes from Kafka and writes micro-batches to a Postgres staging table via JDBC
-3. A **Dagster sensor** in the ETL code location polls the Postgres table every 60 seconds. When new rows are detected, it triggers the `streaming_ingest_job`
-4. The `crypto_prices_snapshot` asset reads from Postgres and materializes the data into DuckDB through the shared IO manager
-
-Streaming is handled entirely by Spark. Dagster's role is to observe the staging table and orchestrate the final materialization, not to manage the stream itself.
-
-### Components
+### Streaming Components
 
 | Container | Role | Image |
 |-----------|------|-------|
@@ -108,7 +86,7 @@ Source DB --> Debezium CDC --> Kafka (raw topic) --> staging table
                                                     Kafka (clean topic) --> final table
 ```
 
-Each stage in this pipeline is independently buffered. Debezium captures row-level changes without polling the source database. The staging table absorbs burst writes so that Dagster can process at its own pace. Publishing back to Kafka after transformation gives downstream consumers a clean, validated stream and decouples the processing speed from the ingestion rate.
+Each stage in this pipeline is independently buffered. Debezium captures row-level changes without polling the source database. The staging table absorbs burst writes so that Dagster can process at its own pace. Publishing back to Kafka after transformation gives downstream consumers a clean, validated stream and decouples processing speed from ingestion rate.
 
 This matters because in production the source stream may produce millions of events per minute. Without this staged decoupling, a slow transformation step would backpressure the entire pipeline. With it, each component scales independently and failures at one stage do not cascade to others.
 
@@ -126,31 +104,74 @@ Source DB --> Debezium CDC --> Kafka (raw) --> Faust / Kafka Streams / Spark Str
                                                   Dagster (periodic audit, reconciliation, monitoring)
 ```
 
-In this design, a lightweight stream processor (Faust, Kafka Streams, or Spark Structured Streaming) handles validation and transformation continuously with millisecond-level latency. Kafka acts as the sole transport between stages. Dagster steps back from the hot path entirely and instead runs periodic audits — reconciling counts between the raw and clean topics, detecting drift, flagging anomalies, and materializing aggregated snapshots to the warehouse on a schedule.
+In this design, a lightweight stream processor handles validation and transformation continuously with millisecond-level latency. Dagster steps back from the hot path entirely and instead runs periodic audits — reconciling counts between the raw and clean topics, detecting drift, flagging anomalies, and materializing aggregated snapshots to the warehouse on a schedule.
 
 The two patterns are not mutually exclusive. A production platform often runs both: the stream processor handles the real-time path while Dagster manages the batch/analytical path and provides observability across the whole system.
 
 ---
 
-## Key Guarantees
+## Validation-Gated Execution
 
-The platform enforces three core invariants:
+Asset checks act as hard execution gates. Every check uses `blocking=True`, meaning Dagster will not execute downstream assets if any check fails. Bad data stops at the boundary.
 
-### 1. Team Isolation
+### Within a team: null checks
 
-A failure in one team's code cannot stop another team's pipelines.
+The ETL pipeline validates its own data before passing it downstream:
 
-### 2. Validation-Gated Execution
+```python
+@asset_check(asset="do_not_clean_data", blocking=True)
+def check_no_nulls_in_required_columns(do_not_clean_data: pd.DataFrame) -> AssetCheckResult:
+    columns_to_check = get_config().get_cols_required_to_not_have_nulls()
+    null_counts = df[columns_to_check].isna().sum()
+    ...
+    return AssetCheckResult(passed=total_nulls == 0, metadata={...})
+```
 
-Downstream assets **will not run** unless upstream checks pass.
+### Across teams: schema drift detection
 
-Bad data cannot silently flow downstream.
+The ML pipeline doesn't trust the ETL pipeline's output blindly. Before using any data, it runs its own checks against `pull_data_from_postgres` — the asset that consumes ETL output:
 
-### 3. Clear Ownership
+```python
+@asset_check(asset="pull_data_from_postgres", name="schema_matches_etl_table", blocking=True)
+def check_schema_matches_etl_table(pull_data_from_postgres: pd.DataFrame) -> AssetCheckResult:
+    expected_schema = {
+        col: TYPE_MAPPING[spec["type"]]
+        for col, spec in get_config().get_expected_schema_from_etl_pipeline().items()
+    }
+    # Checks for missing columns AND wrong dtypes
+    ...
+    return AssetCheckResult(passed=passed, metadata={
+        "missing_columns": missing_columns,
+        "columns_with_wrong_dtype": wrong_type_columns,
+        "observed_dtypes": {col: str(df[col].dtype) for col in df.columns},
+    })
+```
 
-Every asset and check has exactly one owning team.
+This is the cross-team contract pattern: the ML team defines what schema it expects from the ETL team's output, and the pipeline won't proceed if the contract is violated. Each team owns its own validation — no hidden coupling, no silent failures across boundaries.
 
-No hidden coupling.
+---
+
+## Architecture
+
+**Control plane** (Dagster webserver + daemon): Handles scheduling, dependency resolution, run tracking, and observability. Never executes business logic.
+
+**Execution plane** (code locations): Each team owns its assets, checks, and compute. Teams deploy independently via separate gRPC code servers.
+
+**Data plane** (DuckDB): Shared analytical store mounted as a Docker volume. Both code locations read/write through a shared IO manager.
+
+![System Design](docs/sys_design_with_streaming.png)
+
+![Asset Execution Model](docs/asset_execution_model.png)
+
+![Conversational Analytics Interface](docs/conversational.png)
+
+### Key Guarantees
+
+**Team isolation** — A failure in one team's code cannot stop another team's pipelines.
+
+**Validation-gated execution** — Downstream assets will not run unless upstream checks pass. Bad data cannot silently flow downstream.
+
+**Clear ownership** — Every asset and check has exactly one owning team. No hidden coupling.
 
 ---
 
@@ -158,23 +179,23 @@ No hidden coupling.
 
 ```text
 code_locations/
-  etl_pipeline/          # ETL team: batch ingest, streaming sensor, crypto materialization
-  basic_ml_pipeline/     # ML team: model training and registry
+  etl_pipeline/          # ETL team: assets, checks, jobs, sensors, resources
+  basic_ml_pipeline/     # ML team: assets, cross-team schema checks, jobs
   shared/                # Shared resources (DuckDB IO manager, DB client)
-kafka_producer/          # Standalone Kafka producer (CoinGecko API)
-spark_consumer/          # PySpark Structured Streaming consumer
+kafka_producer/          # Standalone service: polls crypto API → Kafka
+spark_consumer/          # Standalone service: Kafka → Spark → Postgres
 services/
-  analytics_api/         # NL-to-SQL service: FastAPI + Gradio UI (optional)
+  analytics_api/         # NL-to-SQL query interface over DuckDB
 deployment/
   docker-compose.yaml    # Local dev compose (builds from source)
   dockerfiles/           # All Dockerfiles
   workspace.yaml         # Dagster code location registry
   dagster.yaml           # Dagster instance config
 docker-compose.yaml      # Production compose (pre-built images)
-Makefile                 # Dev commands
+Makefile                 # One-command startup
 ```
 
-- Each folder under `code_locations/` is a **team deployment unit**
+- Each folder under `code_locations/` is a team deployment unit
 - `shared/` contains reusable utilities
 - `kafka_producer/` and `spark_consumer/` are standalone applications, not Dagster code locations
 - `services/` contains optional platform-level services that are not Dagster code locations
@@ -203,19 +224,45 @@ code_locations/
 
 Config files contain non-sensitive runtime parameters (hostnames, table names, SQL statements). Secrets files contain credentials. The split mirrors how a production system would separate config management from secret management (e.g. Helm values vs. Kubernetes Secrets or Vault).
 
-Running `make dev` (can be shorthanded as `make`), `make uat`, or `make prod` injects the correct `ENV` value into each container, which loads the corresponding file pair at startup.
+Running `make`, `make uat`, or `make prod` injects the correct `ENV` value into each container, which loads the corresponding file pair at startup.
 
 ---
 
-## Quick Start (Local)
+## Design Decisions
 
-### Prerequisites
+**Why separate code locations instead of one monolith?**
+Each code location runs in its own container with its own dependencies. A failure or dependency conflict in one team's code cannot break another team's pipelines.
 
-- Docker Desktop
-- Git
-- macOS or Linux
+**Why DuckDB as the IO manager?**
+It keeps the platform self-contained — no cloud credentials needed to run locally. The architecture maps cleanly to S3 / a data lake in production.
 
-### Run the platform
+**Why Kafka + Spark for streaming?**
+Demonstrates that the platform handles both batch orchestration (Dagster) and stream processing (Spark), with Dagster observing and materializing the streaming outputs.
+
+**Why a singleton config pattern?**
+Keeps the demo readable. In production this could be replaced with Pydantic models, dbt-generated configs, or environment-specific overrides — the interface stays the same.
+
+---
+
+## Production Mapping
+
+| Local | Production |
+|---|---|
+| Docker Compose | Kubernetes / Helm |
+| Local executor | K8sJobExecutor / Celery |
+| DuckDB | S3 / data lake |
+| Local Postgres | Managed cloud SQL (RDS, Cloud SQL) |
+| Makefile | CI/CD pipelines |
+| Kafka (single node) | Managed Kafka (MSK, Confluent) |
+| Spark (local) | EMR / Dataproc / Databricks |
+
+The architecture is designed so production hardening can be added without changing core abstractions.
+
+---
+
+## Quick Start
+
+**Prerequisites:** Docker Desktop, Git, macOS or Linux
 
 ```bash
 git clone https://github.com/ajohnson114/data_platform.git
@@ -223,9 +270,7 @@ cd data_platform
 make
 ```
 
-Open the Dagster UI:
-
-http://localhost:3000
+Open the Dagster UI at `http://localhost:3000`.
 
 ### Run with the NL-to-SQL analytics interface
 
@@ -233,9 +278,7 @@ http://localhost:3000
 make dev-nl2sql
 ```
 
-This starts the full platform plus the analytics service. Open the query interface at:
-
-http://localhost:7860
+This starts the full platform plus the analytics service. Open the query interface at `http://localhost:7860`.
 
 Select your LLM provider (OpenAI or Anthropic), choose a model, and paste your API key directly into the UI — no environment variables required. Once the streaming pipeline has been running for a few minutes, you can ask natural language questions against the live crypto price data:
 
@@ -251,17 +294,14 @@ Select your LLM provider (OpenAI or Anthropic), choose a model, and paste your A
 ## Example Execution Behavior
 
 ### `etl_job`
-
 - Creates database tables
 - Loads mock data
 
 ### `ml_pipeline_job`
-
 - Depends on ETL outputs
 - Intentionally fails if prerequisites are missing
 
 ### `streaming_ingest_job`
-
 - Triggered automatically by the `crypto_price_sensor`
 - Reads crypto prices from Postgres (written by Spark) and materializes to DuckDB
 - Runs whenever new streaming data is detected
@@ -270,44 +310,11 @@ Some failures are intentional and part of the demo.
 
 ---
 
-## Production Mapping (Conceptual)
-
-This repo runs locally but maps cleanly to production:
-
-| Local | Production |
-|------|-----------|
-| Docker Compose | Kubernetes / Helm |
-| Local executor | K8sJobExecutor / Celery |
-| DuckDB | S3 / data lake |
-| Local Postgres | Managed cloud SQL |
-| Makefile | CI/CD pipelines |
-| Single Kafka broker (KRaft) | Multi-broker Kafka cluster |
-| CoinGecko API producer | Debezium CDC connectors |
-| PySpark local[*] | Spark on YARN / K8s |
-
-The architecture is designed so production hardening can be added **without changing core abstractions**.
-
----
-
-## Why This Exists
-
-This project is meant to demonstrate:
-
-- Platform-level thinking
-- Correct abstraction boundaries
-- Multi-team scalability patterns
-- Validation-driven data systems
-- Streaming and batch integration patterns
-- LLM integration as a platform-level capability on top of orchestrated data
-
----
-
 ## Usage Notice
 
-This repository contains work samples for review purposes only.
+This repository is provided as a technical work sample and reference implementation.
 
-- Commercial use is prohibited
-- Personal or educational use may be granted with permission
+Commercial use, redistribution, or incorporation into proprietary systems without explicit permission is prohibited.
 
-**Contact:**
+For licensing inquiries, contact:
 ajohnson0764 [at] gmail [dot] com

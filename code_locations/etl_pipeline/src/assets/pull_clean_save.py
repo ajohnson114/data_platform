@@ -57,7 +57,7 @@ def clean_data(context, pull_data_from_source: pd.DataFrame) -> pd.DataFrame:
 # -------------------------
 
 @asset(group_name="etl_pipeline",required_resource_keys={"etl_postgres"},deps=["clean_data", "prepare_postgres_tables"])
-def save_data_to_postgres_db(context, clean_data: pd.DataFrame):
+def save_data_to_postgres_db(context, clean_data: pd.DataFrame) -> None:
     table_name = get_config().get_etl_table_name()
     etl_postgres = context.resources.etl_postgres
 
