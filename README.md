@@ -54,7 +54,7 @@ The platform is structured around three planes that never mix responsibilities:
 
 **Data plane** (DuckDB): Shared analytical store mounted as a Docker volume. All code locations read and write through a shared IO manager, giving every team access to the same warehouse without coupling their code.
 
-![System Design](docs/platform_sys_design.png)
+![System Design](docs/sys_design_with_streaming.png)
 
 ![Asset Execution Model](docs/asset_execution_model.png)
 
