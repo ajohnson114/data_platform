@@ -6,6 +6,7 @@ A local-first data platform that runs **Kafka, Spark, Postgres, DuckDB, and Dags
 
 - [What This Runs](#what-this-runs)
 - [Architecture](#architecture)
+- [Asset Lineage](#asset-lineage)
 - [Streaming Pipeline](#streaming-pipeline)
 - [Validation-Gated Execution](#validation-gated-execution)
 - [Conversational Analytics Interface](#conversational-analytics-interface)
@@ -65,6 +66,20 @@ The platform is structured around three planes that never mix responsibilities:
 **Validation-gated execution** — Asset checks use `blocking=True`. Dagster will not execute any downstream asset if an upstream check fails. Bad data stops at the boundary, not silently downstream.
 
 **Clear ownership** — Every asset and every check has exactly one owning team. No shared mutable state, no hidden coupling across boundaries.
+
+---
+
+## Asset Lineage
+
+The Dagster UI renders the full dependency graph across every asset group and both code locations (**Lineage**, with all groups expanded):
+
+![Global Asset Lineage](docs/asset_lineage_global.png)
+
+Cross-team dependencies are first-class. `save_data_to_postgres_db` (ETL team) depends on `clean_data` from its own group and `prepare_postgres_tables` from the `db_setup` group — the UI draws that contract across the group boundary:
+
+![Cross-Team Dependency Detail](docs/asset_lineage_detail.png)
+
+> **Tip:** The Dagster UI defaults to a horizontal graph layout, which draws edges awkwardly for graphs like this one with cross-group dependencies. The screenshots above use the vertical orientation — in the lineage view, click the gear icon in the bottom-right of the graph pane and select **Change graph to vertical orientation** (`⌥O`). The setting is remembered per browser.
 
 ---
 
