@@ -120,6 +120,7 @@ services:
       ENV: dev
     volumes:
       - dagster_home:/dagster_home
+      - ./deployment/dagster.yaml:/dagster_home/dagster.yaml:ro
       - dagster_compute_logs:/dagster_compute_logs
     ports:
       - "3000:3000"
@@ -137,6 +138,7 @@ services:
       ENV: dev
     volumes:
       - dagster_home:/dagster_home
+      - ./deployment/dagster.yaml:/dagster_home/dagster.yaml:ro
       - dagster_compute_logs:/dagster_compute_logs
     depends_on:
       - postgres

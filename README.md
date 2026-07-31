@@ -7,6 +7,7 @@ A local-first data platform that runs **Kafka, Spark, Postgres, DuckDB, and Dags
 - [What This Runs](#what-this-runs)
 - [Architecture](#architecture)
 - [Asset Lineage](#asset-lineage)
+- [Execution Results](#execution-results)
 - [Streaming Pipeline](#streaming-pipeline)
 - [Validation-Gated Execution](#validation-gated-execution)
 - [Conversational Analytics Interface](#conversational-analytics-interface)
@@ -79,7 +80,23 @@ Cross-team dependencies are first-class. `save_data_to_postgres_db` (ETL team) d
 
 ![Cross-Team Dependency Detail](docs/asset_lineage_detail.png)
 
-> **Tip:** The Dagster UI defaults to a horizontal graph layout, which draws edges awkwardly for graphs like this one with cross-group dependencies. The screenshots above use the vertical orientation — in the lineage view, click the gear icon in the bottom-right of the graph pane and select **Change graph to vertical orientation** (`⌥O`). The setting is remembered per browser.
+> **Tip:** The Dagster UI defaults to a horizontal graph layout, which draws edges awkwardly for graphs like this one with cross-group dependencies. The screenshots above use the vertical orientation — in the lineage view, click the gear icon in the bottom-right of the graph pane and select **Change graph to vertical orientation** (`⌥O`/`Option + O`). The setting is remembered per browser.
+
+---
+
+## Execution Results
+
+The same graph after running `etl_job`, `ml_pipeline_job`, and `failing_job`. Every asset carries its live status, so a reviewer can read pipeline health directly off the lineage view:
+
+![Asset Lineage After Runs](docs/asset_lineage_after_runs.png)
+
+**Green = materialized.** The full ETL chain (`pull_data_from_source` → `clean_data` → `save_data_to_postgres_db`), the `db_setup` table preparation, and the entire ML chain completed. `pull_data_from_postgres` shows **2 / 2 Passed**: the ML team's cross-team schema checks validated the ETL team's output before any modeling ran.
+
+**Red = failed.** In `failing_pipeline`, `do_not_clean_data` materialized but its blocking null check failed (**0 / 1 Passed**), so Dagster halted the run at the boundary. Downstream `do_other_operation` is marked failed without executing its business logic. `show_stack_trace_for_returning_wrong_type` fails outright by returning a type that violates its output contract. The darker edges trace the failed run's execution path.
+
+**Gray = never materialized.** `crypto_prices_snapshot` is fed by the streaming stack (Kafka + Spark), which was not running for this capture. When the platform runs with streaming enabled, the `crypto_price_sensor` materializes it automatically as data arrives.
+
+These failures are intentional, see [Example Execution Behavior](#example-execution-behavior) for what each job is designed to demonstrate.
 
 ---
 
