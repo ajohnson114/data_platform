@@ -1,0 +1,16 @@
+# Local terraform working files — never commit these.
+# (.terraform.lock.hcl is intentionally NOT ignored: commit it.)
+*.tfstate*
+# Manifests rendered by aws_up.sh — these hold the live RDS and ClickHouse
+# passwords. (.k8s/ above does not match them; the real path is this one.)
+deployment/k8s/.rendered/
+AWS_DEPLOY.md
+.clickhouse/
+
+# Python: local virtualenv, bytecode, and tool caches.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/

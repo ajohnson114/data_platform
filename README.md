@@ -73,8 +73,6 @@ generated → clean → save_data_to_postgres_db → Postgres.etl_table       �
 
 ![System Design](docs/sys_design_with_streaming.png)
 
-![Asset Execution Model](docs/asset_execution_model.png)
-
 ### Key Guarantees
 
 **Team isolation** — Each code location is a separate container with separate dependencies. A crash or import error in one team's code cannot stop another team's pipelines from running.
