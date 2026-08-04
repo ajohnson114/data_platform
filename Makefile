@@ -8,8 +8,7 @@ NL2SQL ?= 0
 # Paths
 # -------------------------
 PROJECT_ROOT := $(shell pwd)
-DEPLOYMENT_DIR := $(PROJECT_ROOT)/deployment
-COMPOSE_FILE := $(DEPLOYMENT_DIR)/docker-compose.yaml
+COMPOSE_FILE := $(PROJECT_ROOT)/docker-compose.yaml
 
 # -------------------------
 # Docker Compose
@@ -19,7 +18,7 @@ COMPOSE = docker compose -f $(COMPOSE_FILE) $(if $(filter 1,$(NL2SQL)),--profile
 # -------------------------
 # Targets
 # -------------------------
-.PHONY: dev uat prod dev-nl2sql up down build logs ps reset help
+.PHONY: dev uat prod dev-nl2sql up down logs ps reset help
 
 dev:
 	@$(MAKE) up ENV=dev
@@ -35,25 +34,21 @@ prod:
 
 up:
 	@echo "🚀 Starting environment: $(ENV)"
-	cd $(DEPLOYMENT_DIR) && ENV=$(ENV) $(COMPOSE) up --build
+	ENV=$(ENV) $(COMPOSE) up
 
 down:
-	@echo "🛑 Stopping environment: $(ENV)"
-	cd $(DEPLOYMENT_DIR) && docker compose -f $(COMPOSE_FILE) --profile nl2sql down --remove-orphans
-
-build:
-	@echo "🔨 Building images for environment: $(ENV)"
-	cd $(DEPLOYMENT_DIR) && ENV=$(ENV) $(COMPOSE) build
+	@echo "🛑 Stopping project!"
+	docker compose -f $(COMPOSE_FILE) --profile nl2sql down --remove-orphans
 
 logs:
-	cd $(DEPLOYMENT_DIR) && $(COMPOSE) logs -f
+	$(COMPOSE) logs -f
 
 ps:
-	cd $(DEPLOYMENT_DIR) && $(COMPOSE) ps
+	$(COMPOSE) ps
 
 reset:
 	@echo "⚠️  Resetting ALL containers and volumes (destructive)"
-	cd $(DEPLOYMENT_DIR) && docker compose -f $(COMPOSE_FILE) --profile nl2sql down -v --remove-orphans
+	docker compose -f $(COMPOSE_FILE) --profile nl2sql down -v --remove-orphans
 
 help:
 	@echo ""
