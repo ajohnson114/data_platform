@@ -1,6 +1,17 @@
 services:
   postgres:
     image: postgres:15
+    # depends_on alone only waits for a container to START. On a fresh volume
+    # Postgres runs initdb first and is not accepting TCP for several seconds,
+    # while dagster's retry_pg_connection_fn gives up after ~10 rapid attempts --
+    # so a first boot can take the whole control plane down with
+    # "too many retries for DB connection". This makes "ready" mean ready.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dagster -d dagster"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
     environment:
       POSTGRES_USER: dagster
       POSTGRES_PASSWORD: dagster
@@ -14,6 +25,14 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
+    # /ping is ClickHouse's own readiness endpoint and needs no credentials,
+    # which matters because the default user has network access disabled here.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
     # Memory budget, measured rather than guessed. The Docker VM is 7.75 GiB;
     # everything else on the stack sits at ~1.4 GiB idle (kafka 0.7, etl 0.28,
     # web 0.11, ml 0.09, postgres 0.08, producer 0.06), the daemon adds ~0.3 and
@@ -94,8 +113,10 @@ services:
     ports:
       - "4000:4000"
     depends_on:
-      - postgres
-      - clickhouse
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
     mem_limit: 1g
     cpus: "1.0"
 
@@ -118,13 +139,24 @@ services:
     ports:
       - "4001:4001"
     depends_on:
-      - postgres
-      - clickhouse
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
     mem_limit: 1g
     cpus: "1.0"
 
   kafka:
     image: apache/kafka:3.8.1
+    # Asking the broker for its API versions proves the KRaft quorum is actually
+    # serving, not merely that the JVM is up. Slower interval/timeout than the
+    # others because each invocation starts a JVM.
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -151,7 +183,8 @@ services:
       # instead of skipping ahead to the live edge and losing the gap.
       - producer_state:/app/state
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     restart: on-failure
     mem_limit: 256m
     cpus: "0.25"
@@ -177,8 +210,10 @@ services:
     volumes:
       - spark_checkpoints:/var/lib/spark/checkpoints
     depends_on:
-      - kafka
-      - postgres
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     # Same reason as the clickhouse service above: on 2026-08-02 this exited(1)
     # and stayed dead for six hours, so ingest silently stopped while every other
     # container looked healthy. A consumer that dies should come back and let the
@@ -199,9 +234,12 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - postgres
-      - code_location_basic_ml
-      - code_location_etl
+      postgres:
+        condition: service_healthy
+      code_location_basic_ml:
+        condition: service_started
+      code_location_etl:
+        condition: service_started
     mem_limit: 256m
     cpus: "0.25"
 
@@ -215,9 +253,12 @@ services:
       - ./deployment/dagster.yaml:/dagster_home/dagster.yaml:ro
       - dagster_compute_logs:/dagster_compute_logs
     depends_on:
-      - postgres
-      - code_location_basic_ml
-      - code_location_etl
+      postgres:
+        condition: service_healthy
+      code_location_basic_ml:
+        condition: service_started
+      code_location_etl:
+        condition: service_started
     mem_limit: 256m
     cpus: "0.25"
 
@@ -234,7 +275,8 @@ services:
       - "8000:8000"
       - "7860:7860"
     depends_on:
-      - clickhouse
+      clickhouse:
+        condition: service_healthy
     mem_limit: 512m
     cpus: "0.5"
 
