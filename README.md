@@ -607,7 +607,30 @@ workaround.
 subscription was posts only. Renaming it is a config change plus a warehouse
 rebuild.)*
 
+The full round trip, on the last of the example questions above:
+
 ![Conversational Analytics Interface](docs/conversational.png)
+
+**Read the generated SQL rather than the answer.** The question — *"how does the
+volume of likes compare to posts?"* — is about volume across record types, and
+the model went to `agg_activity_by_minute`, where `posts` and `likes` are
+already columns:
+
+```sql
+SELECT sum(posts) AS total_posts, sum(likes) AS total_likes,
+       sum(likes) / sum(posts) AS likes_per_post
+FROM analytics.agg_activity_by_minute
+```
+
+There is no `WHERE collection = ...` anywhere in it, and none is needed: the
+mart's grain already is the answer, so there is no filter to forget. That is
+this whole section happening in a single query — 96,022 posts against 585,535
+likes, about 6.1 likes per post, the same shape as the collection table above
+and reached without the model reconstructing it from the record stream.
+
+It is also the counterfactual worth noticing. Pointed at `stg_bsky_records`, the
+same question needs two conditional aggregates over a table where posts are one
+row in eight, and every one of those filters is a chance to be quietly wrong.
 
 ---
 
