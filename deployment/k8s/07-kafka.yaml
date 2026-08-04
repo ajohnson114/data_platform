@@ -1,0 +1,207 @@
+# Single-node KRaft broker -- the same apache/kafka image, the same listener
+# layout and the same retention as the `kafka` service in docker-compose.yaml,
+# so local and cloud run identical Kafka semantics rather than merely similar
+# ones. This replaces the MSK cluster that used to live in terraform/msk.tf.
+#
+# WHY IN-CLUSTER RATHER THAN MSK. MSK cost ~$0.09/hour (2 x kafka.t3.small) and
+# ~30 of the ~45 minutes of a first `aws_up.sh`, and bought two things this
+# platform does not use: multi-broker replication and a managed control plane.
+# The pipeline runs one topic, one partition, one producer and one consumer, and
+# that single-partition shape is load-bearing rather than incidental -- it is
+# what makes the Spark sink a single JDBC writer, which is what makes the
+# downstream BIGSERIAL high-water mark safe (see spark_consumer/consumer.py).
+# A replicated broker cluster cannot make a one-partition topic more available.
+#
+# WHAT IS GIVEN UP, stated plainly: this broker is a single point of failure
+# with no replication, so a node loss or an evicted pod is a Kafka outage, and
+# anything not yet consumed within the retention window below is gone. That is
+# the same exposure the local stack already runs with. It is acceptable here
+# because the producer holds a Jetstream cursor and the consumer holds a Spark
+# checkpoint, so both resume rather than restart -- and because the data is a
+# public firehose whose value is recency. It would not be acceptable for a
+# source of record, which is when MSK earns its price back.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: data-platform
+  labels:
+    app: kafka
+spec:
+  # Headless. A Kafka client bootstraps against this name, and the broker
+  # answers with its *advertised* address, which the client must then be able to
+  # resolve and connect to directly. A headless Service gives the pod a stable
+  # per-pod DNS name (kafka-0.kafka.<ns>.svc.cluster.local) that satisfies that
+  # second hop; a ClusterIP would put a load balancer in front of a hostname the
+  # broker has no way to advertise.
+  clusterIP: None
+  selector:
+    app: kafka
+  # The controller quorum is this same pod, and it dials itself by DNS at
+  # startup -- before any readiness probe can have passed. Without this the A
+  # record does not exist yet and the broker fails to form its own quorum on
+  # every cold start.
+  publishNotReadyAddresses: true
+  ports:
+    - name: plaintext
+      port: 9092
+      targetPort: 9092
+    - name: controller
+      port: 9093
+      targetPort: 9093
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: data-platform
+  labels:
+    app: kafka
+spec:
+  serviceName: kafka
+  # One broker, deliberately. Raising this is NOT a drop-in change: the topic
+  # would still have one partition (so no extra throughput), the quorum voter
+  # list below is written for a single node, and the platform's single-writer
+  # invariant is documented against this shape.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  # Same teardown guarantee as ClickHouse: the EBS volume is provisioned at
+  # runtime by the CSI driver, so terraform never sees it and `terraform
+  # destroy` cannot reap it. whenDeleted: Delete makes deleting this StatefulSet
+  # take the PVC -- and therefore the volume -- with it, so nothing keeps
+  # billing after aws_down.sh.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Retain
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      # The image runs as uid 1000, and a freshly provisioned EBS volume mounts
+      # root-owned. Without an fsGroup the broker cannot create its log dir and
+      # crash-loops on an access denied that reads like a Kafka problem.
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: kafka
+          # Pinned to the same tag as docker-compose.yaml. Bump both together --
+          # a version skew between local and cloud is exactly the kind of
+          # difference that only shows up as a production-only bug.
+          image: apache/kafka:3.8.1
+          ports:
+            - name: plaintext
+              containerPort: 9092
+            - name: controller
+              containerPort: 9093
+          env:
+            # Combined broker+controller, as in compose. Fine for one node;
+            # a real cluster separates the roles.
+            - name: KAFKA_NODE_ID
+              value: "1"
+            - name: KAFKA_PROCESS_ROLES
+              value: broker,controller
+            - name: KAFKA_LISTENERS
+              value: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+            # Must be the pod's own FQDN, not the Service name: this is the
+            # address handed back to every client during metadata discovery, and
+            # a client that cannot reach it hangs on produce/fetch after a
+            # bootstrap that looked like it worked.
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: PLAINTEXT://kafka-0.kafka.data-platform.svc.cluster.local:9092
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: CONTROLLER
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+            # Node id 1 is hosted by pod ordinal 0 -- the two numbering schemes
+            # are unrelated, and the id is what must stay stable across
+            # rescheduling for the pod to rejoin its own quorum.
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: 1@kafka-0.kafka.data-platform.svc.cluster.local:9093
+            # Fixed, and identical to compose. KRaft formats the log dir with
+            # this id on first boot and refuses to start against a volume
+            # carrying a different one, so generating it per-deploy would turn
+            # every re-apply into a crash loop on the surviving volume.
+            - name: CLUSTER_ID
+              value: MkU3OEVBNTcwNTJENDM2Qk
+            # Everything below has a replication factor of 1 because there is
+            # one broker. The defaults are 3 (1 for offsets), so an internal
+            # topic would fail to create the first time anything touched it.
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+            # Nothing creates bluesky_events explicitly -- the producer's first
+            # send does, exactly as under compose and as the MSK configuration
+            # this replaced allowed.
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "true"
+            # NOT a default worth leaving implicit. One partition is what makes
+            # the Spark JDBC sink a single writer, which is what makes the
+            # `bsky_records.id` high-water mark safe to read incrementally --
+            # see the long note in spark_consumer/consumer.py. It was pinned in
+            # the MSK server properties for the same reason.
+            - name: KAFKA_NUM_PARTITIONS
+              value: "1"
+            - name: KAFKA_LOG_RETENTION_HOURS
+              value: "24"
+            # A byte cap the MSK configuration did not have, and the reason this
+            # volume is safe to size at 20Gi. log.retention.hours alone bounds
+            # age, not size: at the ~520 events/sec the README measures, 24h of
+            # this firehose is tens of GB, and a Kafka broker that fills its log
+            # dir takes the directory offline and shuts down -- a hard outage,
+            # not a trim. Whichever limit hits first wins, so in practice this
+            # one does, giving roughly half a day of retention. Raise both this
+            # and the volume together if you need the full 24h.
+            - name: KAFKA_LOG_RETENTION_BYTES
+              value: "12884901888"   # 12 GiB, against a 20Gi volume
+            - name: KAFKA_LOG_DIRS
+              value: /var/lib/kafka/data
+            # The image defaults to a 1G heap. Set explicitly so the limit below
+            # is derived from a known number rather than sitting just under an
+            # invisible one.
+            - name: KAFKA_HEAP_OPTS
+              value: -Xmx768m -Xms256m
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/kafka/data
+          # TCP rather than an API-versions call: every kafka-*.sh probe starts
+          # a second JVM, which on a 250m request costs more than the check is
+          # worth. The listener does not bind until the broker is up.
+          readinessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 6
+          # Sized against the same 2 x t3.large node group ClickHouse (2Gi) and
+          # the Spark consumer (1536Mi) already draw from. The limit leaves
+          # headroom over the heap above for JVM overhead and the page cache
+          # Kafka leans on.
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              memory: 1536Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: gp3
+        resources:
+          requests:
+            # 20Gi matches what MSK provisioned per broker. The retention byte
+            # cap above is what keeps the log inside it.
+            storage: 20Gi

@@ -9,16 +9,21 @@ where = ["src"]
 name = "etl_pipeline"
 version = "0.1.0"
 dependencies = [
+    "clickhouse-connect",
     "dagster==1.13.6",
-    "dagster-duckdb==0.29.6",
-    "dagster-duckdb-pandas==0.29.6",
+    "dagster-aws==0.29.6",
     "dagster-pipes==1.13.6",
+    "dagster-dbt==0.29.6",
     "dagster-postgres==0.29.6",
+    # Pinned to a minor range: dbt-clickhouse tracks dbt-core closely and a
+    # core bump has broken adapter APIs before.
+    "dbt-core>=1.8,<1.10",
+    "dbt-clickhouse>=1.8,<1.10",
     "dagster_shared==1.13.6",
-    "duckdb==1.4.4",
     "numpy",
-    "pandas",
+    "pandas>=2.2,<3",
     "psycopg2-binary",
+    "pyarrow",
     "PyYAML",
     "python-dotenv",
     "requests",

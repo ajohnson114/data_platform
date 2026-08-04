@@ -11,11 +11,15 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+# Tolerate slow PyPI downloads during multi-arch builds
+ENV PIP_DEFAULT_TIMEOUT=100 \
+    PIP_RETRIES=5
+
 RUN pip install --no-cache-dir \
     dagster==1.13.6 \
     dagster-webserver==1.13.6 \
     dagster-postgres==0.29.6 \
-    dagster-duckdb==0.29.6
+    dagster-aws==0.29.6
     
 # Copy Dagster workspace
 COPY deployment/workspace.yaml .
@@ -29,12 +33,10 @@ RUN useradd -m appuser \
     && mkdir -p \
         /app \
         /dagster_home \
-        /duckdb_io_manager \
         /dagster_compute_logs \
     && chown -R appuser:appuser \
         /app \
         /dagster_home \
-        /duckdb_io_manager \
         /dagster_compute_logs
 
 WORKDIR /app

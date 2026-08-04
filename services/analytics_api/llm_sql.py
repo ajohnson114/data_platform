@@ -1,5 +1,7 @@
-from executor import get_max_timestamp
-from config import CRYPTO_TABLE
+import textwrap
+
+from executor import get_clocks
+from config import TABLES
 
 
 def _call_llm(system_prompt: str, user_message: str, provider: str, model: str, api_key: str) -> str:
@@ -30,27 +32,86 @@ def _call_llm(system_prompt: str, user_message: str, provider: str, model: str, 
         raise ValueError(f"Unknown provider: {provider!r}")
 
 
+_PROMPT_INDENT = " " * 8
+
+
+def _render_tables() -> str:
+    """The schema block, built from the registry in config.py.
+
+    Assembled rather than written out so that adding a mart is a config change
+    and the prompt cannot drift from the tables that actually exist.
+
+    Indented to match the surrounding prompt, less the first line's -- the
+    f-string supplies that one. Ragged indentation here would be the model's
+    only structural cue about where one table ends and the next begins.
+    """
+    blocks = []
+    for table in TABLES:
+        schema = textwrap.dedent(table.schema).strip()
+        blocks.append(
+            f"{table.name}  --  {table.grain}\n"
+            f"  USE FOR: {table.use}\n"
+            # Per table, because the tables genuinely disagree: dim_authors has
+            # no event_at, and a single global instruction to use it sent the
+            # model to a column that table does not have.
+            f"  TIME COLUMN: {table.time_column}  --  the only column to filter "
+            f"or order this table by time\n"
+            f"{textwrap.indent(schema, '    ')}"
+        )
+    return textwrap.indent("\n\n".join(blocks), _PROMPT_INDENT).lstrip()
+
+
 def generate_sql(question: str, provider: str, model: str, api_key: str) -> str:
-    max_ts = get_max_timestamp()
+    clocks = get_clocks()
 
     system_prompt = f"""
         You are a highly competent data analyst with 20 years of experience.
 
-        Dataset maximum timestamp:
-        {max_ts}
+        Tables, in the order you should prefer them:
 
-        Interpret relative dates relative to this timestamp.
+        {_render_tables()}
 
-        Tables:
+        PICK THE TABLE THAT ALREADY HAS THE GRAIN THE QUESTION ASKS ABOUT.
+        Each of the first three is one row per the thing being counted, so the
+        answer is usually count(), sum() or a plain ORDER BY -- no filtering to
+        the right record type, because the table is already only that type.
+        Only fall back to stg_bsky_records if none of them fits, and if you do,
+        remember it holds every record type: posts are about one row in eight
+        and likes are roughly two thirds, so any question about posts MUST
+        filter `WHERE collection = 'app.bsky.feed.post'` or the count comes back
+        several times too high.
 
-        {CRYPTO_TABLE}(
-            coin            VARCHAR,    -- values: 'bitcoin', 'ethereum', 'solana', 'cardano', 'polkadot'
-            usd             DOUBLE,     -- price in US dollars
-            eur             DOUBLE,     -- price in euros
-            event_timestamp TIMESTAMP
-        )
+        FOR ANYTHING TIME-RELATED, USE THE TIME COLUMN LISTED ABOVE FOR THE
+        TABLE YOU PICKED. They are not the same column in every table, so read
+        the one beside your table rather than assuming. If the question needs a
+        time column the table you chose does not have, that is a signal you
+        picked the wrong table -- dim_authors in particular holds all-time
+        totals per account and cannot answer "in the last N minutes"; fct_posts
+        grouped by did can.
 
-        Only output a single DuckDB statement that begins with WITH or SELECT.
+        NEVER client_created_at. It is whatever the author's own client put
+        there and those clocks are frequently hours wrong in both directions, so
+        filtering or ordering on it gives answers that are quietly incorrect.
+        The time columns named above are assigned by the firehose or derived
+        from it.
+
+        THERE ARE TWO CLOCKS, because the tables are refreshed on different
+        cycles. Anchor relative dates ("in the last ten minutes", "today")
+        against whichever one belongs to the table you chose:
+
+            fct_posts, agg_activity_by_minute, dim_authors
+                latest data: {clocks['mart']}
+            stg_bsky_records
+                latest data: {clocks['stream']}
+
+        The marts are rebuilt periodically and the raw view tracks the live
+        stream, so the marts can be a few minutes behind. That is expected. Do
+        not use the current wall-clock time for anything.
+
+        Every table holds CURRENT state. Edits are already applied and deleted
+        records are already excluded, so do not filter to exclude them.
+
+        Only output a single ClickHouse statement that begins with WITH or SELECT.
         Do not use ``` fences.
         No commentary.
         If ambiguous, respond with:

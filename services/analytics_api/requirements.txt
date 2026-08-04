@@ -2,7 +2,7 @@ fastapi
 uvicorn[standard]
 openai
 anthropic
-duckdb
+clickhouse-connect
 pydantic
 gradio
 requests

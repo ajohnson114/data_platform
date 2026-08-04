@@ -1,5 +1,7 @@
 from .data_pipeline_checks import check_no_nulls_in_required_columns_failing_pipeline
+from .streaming_checks import check_delete_ratio_in_bounds, check_warehouse_keys_loadable
 
 data_pipeline_asset_checks = [check_no_nulls_in_required_columns_failing_pipeline]
+streaming_asset_checks = [check_warehouse_keys_loadable, check_delete_ratio_in_bounds]
 
-all_asset_checks = [*data_pipeline_asset_checks]
+all_asset_checks = [*data_pipeline_asset_checks, *streaming_asset_checks]

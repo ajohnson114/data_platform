@@ -1,0 +1,115 @@
+version: 2
+
+# Where these tests stop and Dagster's asset checks start
+# ------------------------------------------------------
+# Both assert things about data and it would be easy to end up with two of
+# everything. The line drawn here:
+#
+#   dbt tests        invariants INSIDE a model. Does this table mean what its
+#                    schema says -- unique grain, no nulls where the model
+#                    promises none, values inside their declared set.
+#
+#   Dagster checks   contracts BETWEEN owners. warehouse_keys_loadable guards
+#                    the boundary where the extract hands rows to the loader;
+#                    delete_ratio_in_bounds watches a source for anomalies. They
+#                    gate execution and can block downstream assets.
+#
+# A test that would still make sense if this model were the only thing in the
+# repo belongs here. One that exists because two components have to agree
+# belongs in an asset check.
+
+models:
+  - name: stg_bsky_records
+    description: >
+      Deduplicated, typed view over the raw record snapshot. The only model that
+      applies FINAL; everything downstream inherits current state from it.
+    columns:
+      - name: record_uri
+        description: AT-URI -- the record's protocol identity, and the grain.
+        tests:
+          - not_null
+          - unique
+      - name: did
+        description: Author's decentralised identifier.
+        tests:
+          - not_null
+      - name: collection
+        description: AT Protocol record type.
+        tests:
+          - not_null
+          - accepted_values:
+              # Pinned to the producer's subscription. If a fifth collection is
+              # added upstream this fails, which is the point -- fct_posts and
+              # dim_authors both switch on this column, and a value neither of
+              # them expects would be silently dropped from one and silently
+              # lumped into "other" by the next person reading the numbers.
+              values:
+                - app.bsky.feed.post
+                - app.bsky.feed.like
+                - app.bsky.feed.repost
+                - app.bsky.graph.follow
+      - name: event_at
+        description: Firehose timestamp. The trustworthy clock.
+        tests:
+          - not_null
+
+  - name: fct_posts
+    description: >
+      One row per post. Exists so that "a post" is a row rather than a filter
+      somebody has to remember -- see the model for the incident behind it.
+    columns:
+      - name: record_uri
+        tests:
+          - not_null
+          - unique
+      - name: did
+        tests:
+          - not_null
+      - name: event_at
+        tests:
+          - not_null
+      - name: text_length
+        description: Character count of the body; 0 for a post with empty text.
+        tests:
+          - not_null
+
+  - name: dim_authors
+    description: One row per account seen, with what it did.
+    columns:
+      - name: did
+        tests:
+          - not_null
+          - unique
+      - name: total_records
+        tests:
+          - not_null
+      - name: post_share
+        description: Posts as a fraction of all this account's records.
+        tests:
+          # A ratio outside [0,1] means the numerator and denominator have come
+          # apart -- a collection counted in one and not the other. `between` is
+          # a local generic test; see macros/test_between.sql for why it isn't
+          # dbt_utils.
+          - between:
+              min_value: 0
+              max_value: 1
+
+  - name: agg_activity_by_minute
+    description: >
+      Per-minute activity counts. Incremental with a lookback window; see the
+      model for why appending would be wrong.
+    columns:
+      - name: minute
+        description: Start of the minute bucket. The grain.
+        tests:
+          - not_null
+          # The test that actually guards the incremental strategy: if
+          # delete+insert ever degraded to append, a reprocessed minute would
+          # appear twice and this is what would catch it.
+          - unique
+      - name: records
+        tests:
+          - not_null
+      - name: active_authors
+        tests:
+          - not_null

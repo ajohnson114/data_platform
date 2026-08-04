@@ -1,0 +1,28 @@
+# Test and lint dependencies. Not the runtime dependency set -- the code
+# locations declare their own in code_locations/*/pyproject.toml.
+#
+# The unit suite loads modules by path rather than importing the installed
+# packages (see tests/conftest.py), so it needs only what the modules under
+# test actually import. That is what keeps CI down to one short pip install
+# instead of building three Dagster code locations to test a regex.
+#
+# Versions are exact so a release upstream cannot turn CI red on a commit that
+# changed nothing.
+
+pytest==9.1.1
+
+# Held below 3 to match the `pandas>=2.2,<3` the code locations pin, so the
+# tests exercise the same major version the images ship. Verified to pass on
+# 3.0.x as well, if that pin is ever lifted.
+pandas==2.3.3
+pyarrow==25.0.0
+
+# The ml pipeline's training logic lives in a module with no Dagster import
+# (basic_ml_pipeline/src/model.py), so its tests fit the same load-by-path
+# pattern -- but they do need the estimator itself.
+scikit-learn==1.9.0
+
+ruff==0.16.1
+
+# Used by the YAML validation job to parse the k8s manifests and compose files.
+PyYAML==6.0.3

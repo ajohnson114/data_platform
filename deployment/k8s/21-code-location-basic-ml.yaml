@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-location-basic-ml
+  namespace: data-platform
+  labels:
+    app: code-location-basic-ml
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: code-location-basic-ml
+  template:
+    metadata:
+      labels:
+        app: code-location-basic-ml
+    spec:
+      # IRSA: grants the s3 IO manager access to the compute-logs bucket.
+      serviceAccountName: dagster
+      containers:
+        - name: code-location-basic-ml
+          image: ${IMAGE_PREFIX}-ml:${IMAGE_TAG}
+          ports:
+            - containerPort: 4000
+          env:
+            - name: ENV
+              value: aws
+            - name: DAGSTER_GRPC_PORT
+              value: "4000"
+            - name: DAGSTER_GRPC_HOST
+              value: 0.0.0.0
+            - name: DAGSTER_HOME
+              value: /dagster_home
+            # boto3 needs a region for the s3 IO manager; ClickHouse creds come
+            # from the mounted config/secret, not from the environment.
+            - name: AWS_REGION
+              value: "${AWS_REGION}"
+            - name: OMP_NUM_THREADS
+              value: "1"
+            - name: MKL_NUM_THREADS
+              value: "1"
+            - name: OPENBLAS_NUM_THREADS
+              value: "1"
+          volumeMounts:
+            - name: dagster-home
+              mountPath: /dagster_home
+            # subPath mounts overlay single files inside the image's baked
+            # /app/config tree without hiding its other contents.
+            - name: ml-config
+              subPath: config.aws.yaml
+              mountPath: /app/config/config/config.aws.yaml
+            - name: ml-secrets
+              subPath: secrets.aws.yaml
+              mountPath: /app/config/secrets/secrets.aws.yaml
+          readinessProbe:
+            tcpSocket:
+              port: 4000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 4000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: dagster-home
+          emptyDir: {}
+        - name: ml-config
+          configMap:
+            name: ml-pipeline-config
+        - name: ml-secrets
+          secret:
+            secretName: ml-pipeline-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-location-basic-ml
+  namespace: data-platform
+  labels:
+    app: code-location-basic-ml
+spec:
+  type: ClusterIP
+  selector:
+    app: code-location-basic-ml
+  ports:
+    - port: 4000
+      targetPort: 4000

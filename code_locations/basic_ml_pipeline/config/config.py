@@ -49,7 +49,21 @@ class _Config:
                 'port':self.config['dbs']['postgres']['port'],
                 'database':self.config['dbs']['postgres']['db']
                 }
-    
+
+    def get_clickhouse_creds(self) -> dict:
+        return {'username':self.secrets['dbs']['clickhouse']['user'],
+                'password':self.secrets['dbs']['clickhouse']['password'],
+                'host':self.config['dbs']['clickhouse']['host'],
+                'port':self.config['dbs']['clickhouse']['port'],
+                'database':self.config['dbs']['clickhouse']['database']
+                }
+
+    def get_io_manager_config(self) -> dict:
+        return self.config['data_pipeline']['io_manager']
+
+    def get_landing_zone_config(self) -> dict:
+        return self.config['data_pipeline']['landing_zone']
+
     def get_ml_table_name(self):
         return self.config['data_pipeline']['postgres']['ml_table_name']
     
@@ -62,11 +76,17 @@ class _Config:
     def get_read_from_etl_table(self):
         return self.config['data_pipeline']['postgres']['read_from_etl_table']
     
+    def get_model_config(self) -> dict:
+        return self.config['data_pipeline']['model']
+
+    def get_model_artifact_dataset(self) -> str:
+        return self.config['data_pipeline']['model']['artifact_dataset']
+
+    def get_max_holdout_rmse(self) -> float:
+        return float(self.config['data_pipeline']['asset_checks']['max_holdout_rmse'])
+
     def get_cols_required_to_not_have_nulls(self):
         return self.config['data_pipeline']['asset_checks']['cols_required_to_not_have_nulls']
     
     def get_expected_schema_from_etl_pipeline(self):
         return self.config['data_pipeline']['asset_checks']['expected_schema_from_etl_pipeline']
-
-    def get_fs_io_manager_base_dir(self):
-        return self.config['data_pipeline']['fs_io_manager_base_dir']

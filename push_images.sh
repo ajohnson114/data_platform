@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")"
 
 USER=ajohnson0764
-VERSION=1.0.0
+VERSION=1.1.0
 PLATFORMS=linux/amd64,linux/arm64
 
 # Ensure buildx builder exists and is active
@@ -44,14 +44,6 @@ docker buildx build \
   -t $USER/data-platform-etl:$VERSION \
   --push \
   ./code_locations
-
-# DuckDB IO manager
-docker buildx build \
-  --platform $PLATFORMS \
-  -f deployment/dockerfiles/duckdb_io_manager.dockerfile \
-  -t $USER/data-platform-duckdb:$VERSION \
-  --push \
-  .
 
 # Kafka producer
 docker buildx build \

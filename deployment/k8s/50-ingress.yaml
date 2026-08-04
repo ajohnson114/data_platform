@@ -1,0 +1,50 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dagster
+  namespace: data-platform
+  annotations:
+    # Gradio streams query results over SSE (text/event-stream) and sends no
+    # X-Accel-Buffering header of its own, so a buffering proxy would withhold
+    # every event until the run ended and the UI would sit blank meanwhile.
+    # ingress-nginx already defaults this off; pinning it keeps the UI working
+    # on a cluster whose ConfigMap flipped buffering on globally.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # gradio_app.ask() allows the backend 60s per question, which is exactly
+    # ingress-nginx's default proxy-read-timeout: a slow LLM answer would race
+    # the proxy and lose the SSE stream moments before the result landed.
+    # Dagster's own long-poll traffic is equally happy with the longer ceiling.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # ingress-nginx orders locations by descending path length, so "/"
+          # below stays the catch-all no matter how this list is written; the
+          # specific path is placed first to make that precedence obvious.
+          #
+          # Deliberately no rewrite-target: the prefix is handed to the pod
+          # intact and GRADIO_ROOT_PATH (see 60-analytics-api.yaml) teaches
+          # Gradio to self-reference under it. Stripping the prefix instead
+          # leaves the app believing it lives at "/" while the browser sits at
+          # /nl2sql -- the page renders, then every /gradio_api call lands
+          # outside this location and 404s, which reads as a UI that just hangs.
+          - path: /nl2sql
+            pathType: Prefix
+            backend:
+              service:
+                name: analytics-api
+                port:
+                  number: 7860
+          # Only Gradio is published. The FastAPI port stays cluster-internal:
+          # gradio_app.py reaches it over localhost inside the pod, and /query
+          # runs LLM-generated SQL against the warehouse, so it is not something
+          # to hang off a public path.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dagster-web
+                port:
+                  number: 3000

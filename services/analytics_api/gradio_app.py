@@ -62,8 +62,11 @@ with gr.Blocks() as demo:
             scale=1,
         )
         model = gr.Dropdown(
-            choices=PROVIDER_MODELS["openai"],
-            value=PROVIDER_MODELS["openai"][0],
+            # Keyed off DEFAULT_PROVIDER rather than hardcoding "openai", so
+            # changing the default provider doesn't leave the model dropdown
+            # showing another provider's models until the user touches it.
+            choices=PROVIDER_MODELS[DEFAULT_PROVIDER],
+            value=PROVIDER_MODELS[DEFAULT_PROVIDER][0],
             label="Model",
             scale=2,
         )
@@ -78,17 +81,21 @@ with gr.Blocks() as demo:
 
     gr.Markdown("""
 **Example questions:**
-- What is the latest price for each coin?
-- Which coin has the highest USD price right now?
-- Show me all Bitcoin prices from the last hour
-- How does the Ethereum price in USD compare to EUR over time?
-- What was the highest Solana price recorded today?
-- Rank all coins by their most recent USD price
+- How many posts were made in the last ten minutes?
+- What are the most common languages people are posting in?
+- Show me the ten longest posts
+- Which authors have posted most often?
+- How many posts mention "coffee"?
+- How does the volume of likes compare to posts?
+
+*The warehouse holds likes, reposts and follows alongside posts — only posts
+carry text, and they are a minority of the rows. The last question is there to
+exercise that; the model is told to filter on collection accordingly.*
 """)
 
     question = gr.Textbox(
         label="Ask a question",
-        placeholder="e.g. What is the latest price for each coin?",
+        placeholder="e.g. How many posts were made in the last ten minutes?",
         lines=2,
     )
     submit_btn = gr.Button("Run Query")

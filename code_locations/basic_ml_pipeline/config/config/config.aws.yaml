@@ -1,0 +1,86 @@
+dbs:
+  postgres:
+    host: "${RDS_HOST}"   # rendered at deploy time
+    port: 5432
+    db: dagster
+  clickhouse:
+    host: clickhouse    # Docker Compose service name / k8s Service name
+    port: 8123
+    database: analytics
+
+data_pipeline:
+  postgres: #this has all the info & queries that regard it
+    # Would normally make the tables all at once in a ddl
+    # for the project but this is just a mock prod set up
+    read_from_etl_table: 'SELECT * FROM etl_table_snapshot FINAL'   # read from the ClickHouse warehouse
+    etl_table_name: 'etl_table'
+    etl_insert_statement: |
+      INSERT INTO {0} (model_path, rmse, features)
+      VALUES (%s, %s, %s)
+    # table_name
+
+    ml_table_name: 'model_registry'
+    ml_insert_statement: |
+      INSERT INTO {0} (model_path, rmse, train_rmse, r2, n_train, n_test, features, trained_at)
+      VALUES (:model_path, :rmse, :train_rmse, :r2, :n_train, :n_test, :features, :trained_at)
+    # table_name
+
+  model:
+    # Feature columns are selected by prefix rather than listed, because the
+    # generator upstream decides how many there are. Named here so a change to
+    # that shape is a config edit on both sides rather than a code change.
+    feature_prefix: 'x_'
+    target_column: 'y'
+    # Held out from fit() entirely. The RMSE that gets gated and registered is
+    # this split's -- the in-sample number is recorded beside it only so the gap
+    # between the two is visible.
+    test_size: 0.2
+    # Fixed so the same data produces the same split, and therefore the same
+    # holdout RMSE. Without it the check's threshold would be measured against a
+    # different subset every run and a marginal model would pass or fail at
+    # random. An asset check that flaps teaches people to ignore it.
+    random_state: 42
+    # Trained models go to their own dataset prefix in the landing zone: fs
+    # locally, s3 on EKS, chosen by the same config block the Parquet datasets
+    # use. Kept separate from those so a model never enters the extract's file
+    # listing, which is where the landing watermark is read from.
+    artifact_dataset: 'models'
+
+  io_manager:
+    # reuses the compute logs bucket under its own prefix
+    type: s3
+    bucket: "${COMPUTE_LOGS_BUCKET}"
+    prefix: dagster-io
+
+  landing_zone:
+    # parquet landing zone between Postgres and the warehouse; a third prefix in
+    # the same bucket as compute-logs/ and dagster-io/, and the IRSA policy is
+    # already bucket-wide, so no IAM change is needed
+    type: s3
+    bucket: "${COMPUTE_LOGS_BUCKET}"
+    prefix: landing
+
+  asset_checks:
+    cols_required_to_not_have_nulls: ["x_1", "x_2", "x_3", "x_4", "y"]
+    # Gate on held-out error, not in-sample. The generator adds gaussian noise
+    # with sigma 2.0 (the etl pipeline's `source` block), so ~2.0 is the floor
+    # any correct model lands on and this sits clear of it. It is aimed at the
+    # features or the target having stopped meaning what the schema check
+    # asserts -- not at squeezing accuracy out of a linear fit.
+    max_holdout_rmse: 5.0
+    expected_schema_from_etl_pipeline:
+      x_1:
+        type: float
+        nullable: false
+      x_2:
+        type: float
+        nullable: false
+      x_3:
+        type: float
+        nullable: false
+      x_4:
+        type: float
+        nullable: false
+      y:
+        type: float
+        nullable: false

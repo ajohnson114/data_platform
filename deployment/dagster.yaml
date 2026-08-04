@@ -36,6 +36,76 @@ schedule_storage:
 
 
 # -------------------------
+# Run queue
+# -------------------------
+# Without this block the instance uses DefaultRunCoordinator, which has no queue
+# and no limit at all -- it launches every run the moment it is submitted. That
+# is survivable for manually triggered jobs and wrong for a sensor firing every
+# 60 seconds against a firehose: a slow load, or a warehouse blip, and runs pile
+# up until the code location container is out of memory.
+#
+# Note the run launcher is still the default one, so runs execute as subprocesses
+# *inside* the code location container (1g under compose, 1Gi on EKS). The global
+# limit is therefore a memory budget, not just a scheduling preference.
+run_coordinator:
+  module: dagster.core.run_coordinator
+  class: QueuedRunCoordinator
+  config:
+    max_concurrent_runs: 10
+    tag_concurrency_limits:
+      # One ingest at a time. The assets read a watermark, work, then advance it,
+      # so overlapping runs re-read the same id range from Postgres. The result
+      # is correct either way -- the landing file names are id-ranged and the
+      # warehouse dedupes -- but it is wasted work against the operational store.
+      - key: "ingest"
+        value: "bsky"
+        limit: 1
+      # One mart rebuild at a time. Tagged by dbt_rebuild_sensor (run_tags in
+      # src/sensors/automation_sensor.py).
+      #
+      # The condition in src/dbt.py is what stops a backlog forming; this is what
+      # stops one being released in a herd if it forms anyway. On 2026-08-03 the
+      # queue held ~16 dbt runs accumulated during a warehouse outage and let ten
+      # of them go the instant ClickHouse answered -- twelve concurrent FINAL
+      # scans over 6.2M rows, which took the warehouse down a second time.
+      # max_concurrent_runs above did not help: 10 is the global budget, and ten
+      # simultaneous mart rebuilds is exactly the thing to prevent.
+      - key: "rebuild"
+        value: "dbt"
+        limit: 1
+
+# Run-level retry, above the asset-level RetryPolicy on the load steps. The
+# asset policy handles a step that fails and can succeed on the same attempt's
+# terms; this handles a run that dies outright -- the process killed, the code
+# location restarted mid-run. Both matter here because the load takes exactly
+# the file the extract wrote, so a lost run is a file nobody retries unless
+# something does it automatically.
+run_retries:
+  enabled: true
+  max_retries: 3
+
+# -------------------------
+# Freshness and declarative automation
+# -------------------------
+# Both default to enabled, so these blocks change nothing today. They are here
+# because the marts' rebuild depends on two daemons rather than on a schedule,
+# and "which daemon has to be alive for this to work" should be readable off the
+# instance config rather than inferred from an absence.
+#
+#   freshness       FreshnessDaemon. Evaluates every asset carrying a
+#                   FreshnessPolicy on a 30 second loop and writes PASS/WARN/
+#                   FAIL. Turning this off does not just stop the alarms -- the
+#                   marts' AutomationCondition reads that state, so they would
+#                   stop rebuilding too.
+#   auto_materialize  AssetDaemon. Evaluates AutomationConditions and submits
+#                   the runs. This is what actually launches the dbt rebuild.
+freshness:
+  enabled: true
+
+auto_materialize:
+  enabled: true
+
+# -------------------------
 # Compute logs (filesystem)
 # -------------------------
 compute_logs:

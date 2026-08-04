@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-location-etl
+  namespace: data-platform
+  labels:
+    app: code-location-etl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: code-location-etl
+  template:
+    metadata:
+      labels:
+        app: code-location-etl
+    spec:
+      # IRSA: grants the s3 IO manager access to the compute-logs bucket.
+      serviceAccountName: dagster
+      containers:
+        - name: code-location-etl
+          image: ${IMAGE_PREFIX}-etl:${IMAGE_TAG}
+          ports:
+            - containerPort: 4001
+          env:
+            - name: ENV
+              value: aws
+            - name: DAGSTER_GRPC_PORT
+              value: "4001"
+            - name: DAGSTER_GRPC_HOST
+              value: 0.0.0.0
+            - name: DAGSTER_HOME
+              value: /dagster_home
+            # boto3 needs a region for the s3 IO manager; ClickHouse creds come
+            # from the mounted config/secret, not from the environment.
+            - name: AWS_REGION
+              value: "${AWS_REGION}"
+            - name: OMP_NUM_THREADS
+              value: "1"
+            - name: MKL_NUM_THREADS
+              value: "1"
+            - name: OPENBLAS_NUM_THREADS
+              value: "1"
+          volumeMounts:
+            - name: dagster-home
+              mountPath: /dagster_home
+            # subPath mounts overlay single files inside the image's baked
+            # /app/config tree without hiding its other contents.
+            - name: etl-config
+              subPath: config.aws.yaml
+              mountPath: /app/config/config/config.aws.yaml
+            - name: etl-secrets
+              subPath: secrets.aws.yaml
+              mountPath: /app/config/secrets/secrets.aws.yaml
+          readinessProbe:
+            tcpSocket:
+              port: 4001
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 4001
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: dagster-home
+          emptyDir: {}
+        - name: etl-config
+          configMap:
+            name: etl-pipeline-config
+        - name: etl-secrets
+          secret:
+            secretName: etl-pipeline-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-location-etl
+  namespace: data-platform
+  labels:
+    app: code-location-etl
+spec:
+  type: ClusterIP
+  selector:
+    app: code-location-etl
+  ports:
+    - port: 4001
+      targetPort: 4001

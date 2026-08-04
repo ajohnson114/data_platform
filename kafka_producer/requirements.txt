@@ -1,2 +1,5 @@
 confluent-kafka==2.6.1
-requests==2.32.5
+# Jetstream is a WebSocket firehose. `websockets` is asyncio-native and
+# dependency-free, which suits a single-connection reader; websocket-client
+# would mean a background thread and manual reconnect plumbing for no gain.
+websockets==15.0.1

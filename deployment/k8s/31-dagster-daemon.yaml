@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-daemon
+  namespace: data-platform
+  labels:
+    app: dagster-daemon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dagster-daemon
+  template:
+    metadata:
+      labels:
+        app: dagster-daemon
+    spec:
+      # IRSA: grants the S3ComputeLogManager access to the compute-logs bucket.
+      serviceAccountName: dagster
+      containers:
+        - name: dagster-daemon
+          image: ${IMAGE_PREFIX}-daemon:${IMAGE_TAG}
+          command: ["dagster-daemon", "run", "-w", "/dagster_home/workspace.yaml"]
+          env:
+            - name: DAGSTER_HOME
+              value: /dagster_home
+          envFrom:
+            - secretRef:
+                name: dagster-postgres
+          volumeMounts:
+            - name: dagster-home
+              mountPath: /dagster_home
+            # subPath mounts place the instance files inside the emptyDir
+            # while keeping /dagster_home writable for Dagster's runtime
+            # scratch files.
+            - name: dagster-instance
+              subPath: dagster.yaml
+              mountPath: /dagster_home/dagster.yaml
+            - name: dagster-instance
+              subPath: workspace.yaml
+              mountPath: /dagster_home/workspace.yaml
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: dagster-home
+          emptyDir: {}
+        - name: dagster-instance
+          configMap:
+            name: dagster-instance

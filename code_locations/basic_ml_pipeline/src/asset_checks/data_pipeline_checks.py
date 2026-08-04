@@ -10,15 +10,15 @@ TYPE_MAPPING = {
     "string": object,
 }
 
-@asset_check(asset="pull_data_from_postgres", name="schema_matches_etl_table", blocking=True)
-def check_schema_matches_etl_table(pull_data_from_postgres: pd.DataFrame) -> AssetCheckResult:
-    if len(pull_data_from_postgres) == 0:
+@asset_check(asset="pull_data_from_warehouse", name="schema_matches_etl_table", blocking=True)
+def check_schema_matches_etl_table(pull_data_from_warehouse: pd.DataFrame) -> AssetCheckResult:
+    if len(pull_data_from_warehouse) == 0:
         return AssetCheckResult(
             passed=False,
             metadata={"reason": "DataFrame is empty — run etl_job first"}
         )
     
-    df = pull_data_from_postgres
+    df = pull_data_from_warehouse
     expected_schema = {
         col: TYPE_MAPPING[spec["type"]]
         for col, spec in get_config().get_expected_schema_from_etl_pipeline().items()
@@ -44,15 +44,15 @@ def check_schema_matches_etl_table(pull_data_from_postgres: pd.DataFrame) -> Ass
         },
     )
 
-@asset_check(asset="pull_data_from_postgres", name="no_nulls_in_required_columns", blocking=True)
-def check_no_nulls_in_required_columns(pull_data_from_postgres: pd.DataFrame) -> AssetCheckResult:
-    if len(pull_data_from_postgres) == 0:
+@asset_check(asset="pull_data_from_warehouse", name="no_nulls_in_required_columns", blocking=True)
+def check_no_nulls_in_required_columns(pull_data_from_warehouse: pd.DataFrame) -> AssetCheckResult:
+    if len(pull_data_from_warehouse) == 0:
         return AssetCheckResult(
             passed=False,
             metadata={"reason": "DataFrame is empty — run etl_job first"}
         )
     
-    df = pull_data_from_postgres
+    df = pull_data_from_warehouse
     columns_to_check = get_config().get_cols_required_to_not_have_nulls()
     null_counts = df[columns_to_check].isna().sum()
     total_nulls = int(null_counts.sum())

@@ -49,25 +49,96 @@ class _Config:
                 'port':self.config['dbs']['postgres']['port'],
                 'database':self.config['dbs']['postgres']['db']
                 }
-    
+
+    def get_clickhouse_creds(self) -> dict:
+        return {'username':self.secrets['dbs']['clickhouse']['user'],
+                'password':self.secrets['dbs']['clickhouse']['password'],
+                'host':self.config['dbs']['clickhouse']['host'],
+                'port':self.config['dbs']['clickhouse']['port'],
+                'database':self.config['dbs']['clickhouse']['database']
+                }
+
+    def get_io_manager_config(self) -> dict:
+        return self.config['data_pipeline']['io_manager']
+
+    def get_landing_zone_config(self) -> dict:
+        return self.config['data_pipeline']['landing_zone']
+
     def get_etl_table_ddl(self):
         return self.config['data_pipeline']['postgres']['make_etl_table']
     
     def get_ml_table_ddl(self):
         return self.config['data_pipeline']['postgres']['make_ml_table']
-    
+
+    def get_ml_table_alters(self) -> list:
+        """Idempotent ADD COLUMN statements run after the CREATE.
+
+        CREATE TABLE IF NOT EXISTS does nothing to a table that already exists,
+        so these are what bring a volume created before the metric columns up to
+        the current shape. Same pattern as ensure_postgres_table in the Spark
+        consumer, and for the same reason -- a demo people re-run against an old
+        volume should not fail on a missing column.
+        """
+        return self.config['data_pipeline']['postgres'].get('alter_ml_table', [])
+
+    def get_source_config(self) -> dict:
+        return self.config['data_pipeline']['source']
+
     def get_ml_table_name(self):
         return self.config['data_pipeline']['postgres']['ml_table_name']
     
     def get_etl_table_name(self):
         return self.config['data_pipeline']['postgres']['etl_table_name']
     
-    def get_crypto_table_name(self):
-        return self.config['data_pipeline']['streaming']['crypto_table_name']
+    def get_bsky_records_table_name(self):
+        return self.config['data_pipeline']['streaming']['bsky_table_name']
 
-    def get_read_crypto_prices(self):
-        return self.config['data_pipeline']['streaming']['read_crypto_prices']
+    def get_read_etl_table(self):
+        return self.config['data_pipeline']['postgres']['read_etl_table']
+
+    def get_read_bsky_records(self):
+        return self.config['data_pipeline']['streaming']['read_bsky_records']
+
+    def get_landing_batch_size(self):
+        return self.config['data_pipeline']['streaming']['landing_batch_size']
+
+    def get_records_table_name(self):
+        return self.config['data_pipeline']['clickhouse']['records_table']
+
+    def get_records_key(self):
+        return self.config['data_pipeline']['clickhouse']['records_key']
+
+    def get_records_version_column(self):
+        return self.config['data_pipeline']['clickhouse']['records_version_column']
+
+    def get_etl_snapshot_table_name(self):
+        return self.config['data_pipeline']['clickhouse']['etl_table']
+
+    def get_records_landing_dataset(self):
+        return self.config['data_pipeline']['landing_zone']['records_dataset']
+
+    def get_etl_landing_dataset(self):
+        return self.config['data_pipeline']['landing_zone']['etl_dataset']
+
+
+    def get_purge_deleted_records_cron(self):
+        return self.config['data_pipeline']['schedules']['purge_deleted_records']
+
+    def get_landing_retention_days(self):
+        return self.config['data_pipeline']['schedules']['landing_retention_days']
+
+    def get_dbt_rebuild_cron(self):
+        return self.config['data_pipeline']['schedules']['dbt_rebuild']
+
+    def get_mart_freshness(self) -> dict:
+        return self.config['data_pipeline']['freshness']['marts']
+
+    def get_snapshot_freshness(self) -> dict:
+        return self.config['data_pipeline']['freshness']['snapshot']
 
     def get_cols_required_to_not_have_nulls(self):
         return self.config['data_pipeline']['asset_checks']['cols_required_to_not_have_nulls']
+
+    def get_max_delete_ratio(self):
+        return self.config['data_pipeline']['asset_checks']['max_delete_ratio']
     

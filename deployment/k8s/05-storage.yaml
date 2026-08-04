@@ -1,0 +1,16 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  fsType: ext4
+  encrypted: "true"
+# WaitForFirstConsumer keeps the EBS volume in the same AZ as the pod that
+# claims it -- EBS is zonal, unlike the EFS volume this replaced.
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+# Delete so the dynamically provisioned volume dies with its PVC; nothing may
+# keep billing after aws_down.sh.
+reclaimPolicy: Delete

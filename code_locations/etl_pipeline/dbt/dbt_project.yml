@@ -1,0 +1,31 @@
+name: analytics
+version: "1.0.0"
+config-version: 2
+
+# The profile is generated at runtime from the code location's own config -- see
+# profiles.yml and src/dbt.py. dbt does not get a second copy of the warehouse
+# credentials.
+profile: analytics
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+# ClickHouse has no schemas in the Postgres sense -- `database` is the namespace
+# and the warehouse already has one. Left unquoted so generated DDL matches the
+# identifiers the loader writes.
+quoting:
+  database: false
+  schema: false
+  identifier: false
+
+models:
+  analytics:
+    # Staging is a view: it exists to apply FINAL and typing exactly once, not to
+    # store anything. Everything downstream reads deduplicated rows without each
+    # model having to remember.
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

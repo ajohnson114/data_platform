@@ -1,0 +1,253 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: clickhouse-credentials
+  namespace: data-platform
+type: Opaque
+stringData:
+  # dagster: read-write, used by both code locations.
+  CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD}"
+  # analytics_ro: readonly, used by the NL-to-SQL analytics API.
+  CLICKHOUSE_RO_PASSWORD: "${CLICKHOUSE_RO_PASSWORD}"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-users
+  namespace: data-platform
+data:
+  # Mounted as a directory over /etc/clickhouse-server/users.d/. Functionally
+  # identical to deployment/clickhouse/users.xml used by docker-compose, so
+  # local and cloud behave the same. Passwords are pulled from the container
+  # environment via from_env so they never land in a ConfigMap.
+  users.xml: |
+    <clickhouse>
+      <profiles>
+        <!-- Read-only profile for the NL-to-SQL service: SELECT only, and it
+             cannot change settings either. -->
+        <analytics_readonly>
+          <readonly>1</readonly>
+          <!-- Warehouse tables are ReplacingMergeTree and deduplicate at merge
+               time, so recently appended rows can appear twice. `final` applies
+               the FINAL modifier to every query from this profile. It lives
+               here because an LLM writes the SQL and cannot be relied on to
+               remember FINAL. No-op on engines that don't support it. -->
+          <final>1</final>
+        </analytics_readonly>
+      </profiles>
+
+      <users>
+        <!-- Dagster writes the warehouse tables (CREATE / INSERT / EXCHANGE).
+             The grant covers creating the `analytics` database itself, which is
+             what the ClickHouse resource does on a cold warehouse. -->
+        <dagster>
+          <password from_env="CLICKHOUSE_DAGSTER_PASSWORD"/>
+          <networks>
+            <ip>::/0</ip>
+          </networks>
+          <profile>default</profile>
+          <quota>default</quota>
+          <access_management>0</access_management>
+          <grants>
+            <query>GRANT ALL ON analytics.*</query>
+            <!-- Table-function grants are GLOBAL, not database-scoped, so
+                 `GRANT ALL ON analytics.*` does not imply them. S3 is what the
+                 aws environment actually uses (the warehouse reads landed
+                 Parquet straight out of the bucket) and FILE is here so the
+                 grant set matches deployment/clickhouse/users.xml rather than
+                 diverging by environment. Deliberately NOT granted to
+                 analytics_ro: that user runs LLM-generated SQL, and FILE or S3
+                 would hand it a read path out of the warehouse. -->
+            <query>GRANT CREATE TEMPORARY TABLE ON *.*</query>
+            <query>GRANT FILE ON *.*</query>
+            <query>GRANT S3 ON *.*</query>
+          </grants>
+        </dagster>
+
+        <!-- The analytics API runs generated SQL; it must never mutate.
+             The grant is not redundant with readonly=1: without an explicit
+             <grants> block a users.xml user can read EVERY database, so the
+             readonly user would still see system, default and
+             information_schema. readonly=1 stops it writing; the grant is what
+             stops it reading past the warehouse. Same restriction as
+             deployment/clickhouse/users.xml, so local and cloud match. -->
+        <analytics_ro>
+          <password from_env="CLICKHOUSE_RO_PASSWORD"/>
+          <networks>
+            <ip>::/0</ip>
+          </networks>
+          <profile>analytics_readonly</profile>
+          <quota>default</quota>
+          <access_management>0</access_management>
+          <grants>
+            <query>GRANT SELECT ON analytics.*</query>
+          </grants>
+        </analytics_ro>
+      </users>
+    </clickhouse>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-config
+  namespace: data-platform
+data:
+  # Tells ClickHouse to authenticate to S3 with the pod's own IRSA identity.
+  #
+  # ClickHouse uses the AWS C++ SDK, so it already understands the standard
+  # credential provider chain -- including the AWS_ROLE_ARN and
+  # AWS_WEB_IDENTITY_TOKEN_FILE that EKS injects into a pod whose service
+  # account carries the role annotation. What it does NOT do is consult that
+  # chain unless asked: without use_environment_credentials it looks only for
+  # explicit keys and fails with an access error that reads like a permissions
+  # problem rather than a configuration one.
+  #
+  # Scoped by endpoint rather than set globally, so this grants nothing for any
+  # bucket but ours. The key name is arbitrary; ClickHouse matches on the
+  # endpoint prefix.
+  #
+  # No credentials appear here. That is the entire point of IRSA, and it is why
+  # this is a ConfigMap and not a Secret.
+  s3.xml: |
+    <clickhouse>
+      <s3>
+        <platform_landing>
+          <endpoint>https://${COMPUTE_LOGS_BUCKET}.s3.${AWS_REGION}.amazonaws.com/landing/</endpoint>
+          <use_environment_credentials>true</use_environment_credentials>
+        </platform_landing>
+      </s3>
+    </clickhouse>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: data-platform
+  labels:
+    app: clickhouse
+spec:
+  type: ClusterIP
+  selector:
+    app: clickhouse
+  ports:
+    - name: http
+      port: 8123
+      targetPort: 8123
+    - name: native
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  namespace: data-platform
+  labels:
+    app: clickhouse
+spec:
+  serviceName: clickhouse
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clickhouse
+  # Teardown guarantee: the data volume is provisioned at runtime by the EBS CSI
+  # driver, so terraform never sees it and `terraform destroy` cannot reap it.
+  # whenDeleted: Delete makes deleting this StatefulSet (while the cluster is
+  # still alive) delete the PVC and therefore the EBS volume -- otherwise it
+  # keeps billing after aws_down.sh. whenScaled: Retain keeps the warehouse
+  # intact across an intentional scale-to-zero.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Retain
+  template:
+    metadata:
+      labels:
+        app: clickhouse
+    spec:
+      # IRSA: lets the warehouse read landed Parquet out of S3 itself. The pod
+      # identity webhook injects AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE
+      # because this account carries the role annotation; s3.xml below is what
+      # makes ClickHouse actually look at them.
+      serviceAccountName: clickhouse
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:24.8
+          ports:
+            - name: http
+              containerPort: 8123
+            - name: native
+              containerPort: 9000
+          env:
+            # Creates the analytics database on first boot of an empty volume.
+            - name: CLICKHOUSE_DB
+              value: analytics
+            # Deliberately NOT named CLICKHOUSE_PASSWORD: the image entrypoint
+            # reacts to that name by writing a default-user.xml into
+            # /etc/clickhouse-server/users.d/, which is a read-only ConfigMap
+            # mount here -- the write fails and the container crash-loops.
+            - name: CLICKHOUSE_DAGSTER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: clickhouse-credentials
+                  key: CLICKHOUSE_PASSWORD
+            - name: CLICKHOUSE_RO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: clickhouse-credentials
+                  key: CLICKHOUSE_RO_PASSWORD
+            # The AWS SDK needs a region before it will sign anything. The
+            # webhook injects the role and token but not this.
+            - name: AWS_REGION
+              value: "${AWS_REGION}"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+            - name: clickhouse-users
+              mountPath: /etc/clickhouse-server/users.d
+            # subPath, NOT a directory mount like users.d above. The image ships
+            # its own /etc/clickhouse-server/config.d/docker_related_config.xml,
+            # which is what sets listen_host to 0.0.0.0 and :: -- mounting a
+            # ConfigMap over the whole directory hides it, ClickHouse falls back
+            # to listening on localhost only, and the Service and both probes
+            # fail with nothing in the logs to explain why.
+            - name: clickhouse-config
+              subPath: s3.xml
+              mountPath: /etc/clickhouse-server/config.d/s3.xml
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 8123
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 8123
+            initialDelaySeconds: 45
+            periodSeconds: 20
+            failureThreshold: 6
+          # The cluster is 2 x t3.large and Spark already requests 1536Mi, so
+          # this stays modest on purpose.
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              memory: 3Gi
+      volumes:
+        - name: clickhouse-users
+          configMap:
+            name: clickhouse-users
+        - name: clickhouse-config
+          configMap:
+            name: clickhouse-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 10Gi

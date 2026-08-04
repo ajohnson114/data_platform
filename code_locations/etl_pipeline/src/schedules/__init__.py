@@ -1,0 +1,3 @@
+from .purge_deleted_records_schedule import purge_deleted_records_schedule
+
+all_schedules = [purge_deleted_records_schedule]

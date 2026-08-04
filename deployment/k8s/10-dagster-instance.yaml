@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dagster-instance
+  namespace: data-platform
+data:
+  dagster.yaml: |
+    run_storage:
+      module: dagster_postgres.run_storage
+      class: PostgresRunStorage
+      config:
+        postgres_db:
+          hostname: { env: DAGSTER_PG_HOST }
+          port: 5432
+          db_name: { env: DAGSTER_PG_DB }
+          username: { env: DAGSTER_PG_USER }
+          password: { env: DAGSTER_PG_PASSWORD }
+        should_autocreate_tables: true
+
+    event_log_storage:
+      module: dagster_postgres.event_log
+      class: PostgresEventLogStorage
+      config:
+        postgres_db:
+          hostname: { env: DAGSTER_PG_HOST }
+          port: 5432
+          db_name: { env: DAGSTER_PG_DB }
+          username: { env: DAGSTER_PG_USER }
+          password: { env: DAGSTER_PG_PASSWORD }
+        should_autocreate_tables: true
+
+    schedule_storage:
+      module: dagster_postgres.schedule_storage
+      class: PostgresScheduleStorage
+      config:
+        postgres_db:
+          hostname: { env: DAGSTER_PG_HOST }
+          port: 5432
+          db_name: { env: DAGSTER_PG_DB }
+          username: { env: DAGSTER_PG_USER }
+          password: { env: DAGSTER_PG_PASSWORD }
+        should_autocreate_tables: true
+
+    # Without this the instance uses DefaultRunCoordinator, which has no queue
+    # and no limit -- every run launches the moment it is submitted. The sensor
+    # fires every 60 seconds against a firehose, and the default run launcher
+    # executes runs inside the code location pod (limits.memory: 1Gi), so this
+    # is a memory budget as much as a scheduling policy.
+    run_coordinator:
+      module: dagster.core.run_coordinator
+      class: QueuedRunCoordinator
+      config:
+        max_concurrent_runs: 10
+        tag_concurrency_limits:
+          # One ingest at a time -- see deployment/dagster.yaml.
+          - key: "ingest"
+            value: "bsky"
+            limit: 1
+          # One mart rebuild at a time -- see deployment/dagster.yaml.
+          - key: "rebuild"
+            value: "dbt"
+            limit: 1
+
+    # Above the asset-level RetryPolicy: that covers a step that fails, this
+    # covers a run that dies outright (pod evicted, code location restarted).
+    # The load takes exactly the file the extract wrote, so a lost run is a file
+    # nobody retries unless something does it automatically.
+    run_retries:
+      enabled: true
+      max_retries: 3
+
+    # S3 instead of a shared filesystem: there is no RWX volume in the cluster
+    # any more. Credentials come from the `dagster` service account via IRSA.
+    compute_logs:
+      module: dagster_aws.s3.compute_log_manager
+      class: S3ComputeLogManager
+      config:
+        bucket: "${COMPUTE_LOGS_BUCKET}"
+        prefix: compute-logs
+        region: "${AWS_REGION}"
+
+    telemetry:
+      enabled: false
+  workspace.yaml: |
+    # k8s Service names may not contain underscores; location_name keeps the
+    # underscored names the code locations register with.
+    load_from:
+      - grpc_server:
+          host: code-location-basic-ml
+          port: 4000
+          location_name: basic_ml_pipeline
+
+      - grpc_server:
+          host: code-location-etl
+          port: 4001
+          location_name: etl_pipeline

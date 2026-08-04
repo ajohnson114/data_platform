@@ -1,0 +1,96 @@
+<?xml version="1.0"?>
+<!--
+  ClickHouse users for the analytics warehouse.
+
+  This file is mounted read-only at /etc/clickhouse-server/users.d/users.xml.
+  Everything under users.d/ is merged into the server's user configuration at
+  startup, so this file only declares what we add on top of the stock defaults.
+
+  Two users, one per direction of traffic:
+
+    dagster       Written to by the Dagster code locations through the
+                  ClickHouse resource. Full read/write on the `analytics`
+                  database and nothing else: it creates, replaces and drops
+                  tables there, including the atomic EXCHANGE TABLES swap.
+
+    analytics_ro  Read by services/analytics_api, the NL-to-SQL service.
+                  SELECT on `analytics` only, under a readonly=1 profile.
+
+  analytics_ro IS the NL-to-SQL guardrail. An LLM writes that service's SQL, so
+  the server has to be the thing that refuses to run anything destructive:
+  readonly=1 rejects every write, DDL and mutation regardless of what the model
+  generates. The SQL keyword blocklist in services/analytics_api/guardrails.py
+  is defence in depth, not the security boundary: a cheap first filter so that
+  obviously unsafe generated SQL never reaches the server at all.
+
+  Passwords are plaintext because this file is only used by local
+  docker-compose. On EKS the same two users are rendered into the
+  `clickhouse-users` ConfigMap with passwords from the `clickhouse-credentials`
+  Secret.
+-->
+<clickhouse>
+    <profiles>
+        <!-- readonly=1 allows SELECT-type queries only, and forbids changing
+             settings for the session (otherwise a client could simply turn
+             readonly back off). Named distinctly so it never collides with the
+             stock profiles in the image's own users.xml. -->
+        <analytics_readonly>
+            <readonly>1</readonly>
+            <!-- The warehouse tables are ReplacingMergeTree, whose deduplication
+                 happens at merge time, so a row appended a moment ago can still
+                 be visible twice. `final` applies the FINAL modifier to every
+                 query from this profile, which collapses those duplicates. It
+                 belongs here rather than in the generated SQL because an LLM
+                 writes that SQL and cannot be relied on to remember FINAL. It is
+                 a no-op against engines that don't support it. -->
+            <final>1</final>
+        </analytics_readonly>
+    </profiles>
+
+    <users>
+        <!-- Read/write pipeline user. -->
+        <dagster>
+            <password>dagster</password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+            <grants>
+                <query>GRANT ALL ON analytics.*</query>
+                <!-- Table-function grants are GLOBAL, not database-scoped, so
+                     `GRANT ALL ON analytics.*` does not imply them. Without
+                     these the warehouse cannot open a landed Parquet itself and
+                     the direct loader fails with ACCESS_DENIED.
+
+                     Worth knowing how that failure presents: DESCRIBE against a
+                     table function succeeds without the grant and only the read
+                     is refused, so the loader gets a schema, creates the table,
+                     and then dies on the INSERT.
+
+                     Both FILE and S3 in both environments even though each uses
+                     only one. The loader is chosen from the landing zone type at
+                     runtime and the same image runs in every ENV, so pinning the
+                     grant to the environment would turn a config change
+                     (type: fs -> type: s3) into an access error at
+                     materialization time that reads like a bug. -->
+                <query>GRANT CREATE TEMPORARY TABLE ON *.*</query>
+                <query>GRANT FILE ON *.*</query>
+                <query>GRANT S3 ON *.*</query>
+            </grants>
+        </dagster>
+
+        <!-- Read-only NL-to-SQL user. -->
+        <analytics_ro>
+            <password>analytics_ro</password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>analytics_readonly</profile>
+            <quota>default</quota>
+            <grants>
+                <query>GRANT SELECT ON analytics.*</query>
+            </grants>
+        </analytics_ro>
+    </users>
+</clickhouse>

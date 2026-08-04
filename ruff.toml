@@ -1,0 +1,45 @@
+# Lint scope is deliberately narrow.
+#
+# This config was chosen by running each rule family against the existing
+# ~4.5k lines and keeping only the families that already pass, so CI is a
+# regression gate rather than a backlog. Style families that would have
+# demanded a repo-wide reformat -- I (import order), W (whitespace),
+# UP (pyupgrade), Q (quote style), COM (trailing commas) -- are left out on
+# purpose: churning every file to satisfy a linter added after the fact
+# destroys `git blame` for no behavioural gain.
+#
+# E501 is absent for the same reason. The codebase carries long explanatory
+# comments (up to 165 characters) that are more useful unwrapped than wrapped.
+# line-length below is therefore only what the formatter would target.
+
+line-length = 120
+
+# The images build on python:3.11-slim, so lint against the oldest interpreter
+# the code actually runs on, not the one the tests happen to use.
+target-version = "py311"
+
+exclude = [
+    ".venv",
+    "docs",
+    "new_docs",
+    # dbt writes compiled SQL and manifests here; it is build output.
+    "**/target",
+]
+
+[lint]
+select = [
+    "F",   # pyflakes: undefined names, unused imports, shadowed definitions
+    "E4",  # import placement
+    "E7",  # statement-level errors (comparisons to None/True, bare lambdas)
+    "E9",  # syntax and IO errors
+    "B",   # bugbear: mutable default args, loop-variable capture, silent bugs
+    "A",   # shadowed builtins
+    "ICN", # `import pandas as pd` / `numpy as np` conventions
+    "T10", # a forgotten breakpoint() must never merge
+]
+
+[lint.per-file-ignores]
+# Two genuinely unused imports (`yaml`, `os`) predate this config. Silenced
+# rather than fixed because touching source is out of scope for adding CI;
+# see the CI notes in the workflow. Remove this entry when they go.
+"code_locations/shared/resources/db_client_resource.py" = ["F401"]

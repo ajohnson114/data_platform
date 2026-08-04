@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-web
+  namespace: data-platform
+  labels:
+    app: dagster-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dagster-web
+  template:
+    metadata:
+      labels:
+        app: dagster-web
+    spec:
+      # IRSA: grants the S3ComputeLogManager access to the compute-logs bucket.
+      serviceAccountName: dagster
+      containers:
+        - name: dagster-web
+          image: ${IMAGE_PREFIX}-webserver:${IMAGE_TAG}
+          command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000", "-w", "/dagster_home/workspace.yaml"]
+          ports:
+            - containerPort: 3000
+          env:
+            - name: DAGSTER_HOME
+              value: /dagster_home
+          envFrom:
+            - secretRef:
+                name: dagster-postgres
+          volumeMounts:
+            - name: dagster-home
+              mountPath: /dagster_home
+            # subPath mounts place the instance files inside the emptyDir
+            # while keeping /dagster_home writable for Dagster's runtime
+            # scratch files.
+            - name: dagster-instance
+              subPath: dagster.yaml
+              mountPath: /dagster_home/dagster.yaml
+            - name: dagster-instance
+              subPath: workspace.yaml
+              mountPath: /dagster_home/workspace.yaml
+          readinessProbe:
+            httpGet:
+              path: /server_info
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /server_info
+              port: 3000
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: dagster-home
+          emptyDir: {}
+        - name: dagster-instance
+          configMap:
+            name: dagster-instance
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dagster-web
+  namespace: data-platform
+  labels:
+    app: dagster-web
+spec:
+  type: ClusterIP
+  selector:
+    app: dagster-web
+  ports:
+    - port: 3000
+      targetPort: 3000

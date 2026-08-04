@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-api
+  namespace: data-platform
+  labels:
+    app: analytics-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: analytics-api
+  template:
+    metadata:
+      labels:
+        app: analytics-api
+    spec:
+      containers:
+        - name: analytics-api
+          image: ${IMAGE_PREFIX}-analytics-api:${IMAGE_TAG}
+          ports:
+            - containerPort: 8000
+            - containerPort: 7860
+          # Not a Dagster code location: no config.py, so it is env-var driven.
+          # It reads the warehouse as analytics_ro and never needs the dagster
+          # service account.
+          env:
+            - name: CLICKHOUSE_HOST
+              value: clickhouse
+            - name: CLICKHOUSE_PORT
+              value: "8123"
+            - name: CLICKHOUSE_DATABASE
+              value: analytics
+            - name: CLICKHOUSE_USER
+              value: analytics_ro
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: clickhouse-credentials
+                  key: CLICKHOUSE_RO_PASSWORD
+            # Must track the ingress path in 50-ingress.yaml. Gradio bakes this
+            # into the page as its "root" and builds every /gradio_api and SSE
+            # queue call from it. Left unset behind a prefixed ingress the page
+            # still renders -- its asset tags are relative -- but the app aims
+            # its API calls at the domain root, outside the proxied prefix, so
+            # every question 404s. Only Gradio needs this: FastAPI is reached
+            # over localhost inside the pod and is not proxied.
+            - name: GRADIO_ROOT_PATH
+              value: /nl2sql
+          # Now that traffic arrives through the ingress, readiness has to mean
+          # "Gradio is listening": the CMD backgrounds uvicorn and starts Gradio
+          # second, so without this the Service would publish the pod during the
+          # gap and the UI would 502 on every rollout. "/" is served alongside
+          # the prefixed route, which keeps the probe independent of the prefix.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 7860
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 768Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-api
+  namespace: data-platform
+  labels:
+    app: analytics-api
+spec:
+  type: ClusterIP
+  selector:
+    app: analytics-api
+  ports:
+    - name: api
+      port: 8000
+      targetPort: 8000
+    - name: gradio
+      port: 7860
+      targetPort: 7860

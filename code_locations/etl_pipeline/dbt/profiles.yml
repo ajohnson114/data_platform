@@ -1,0 +1,31 @@
+# Every value is an env_var, and the code location sets them from
+# get_clickhouse_creds() before invoking dbt -- see src/dbt.py.
+#
+# This is the whole answer to "dbt brings a second config system". It does, and
+# the fix is to give it no independent source of truth: the credentials live
+# where every other component reads them from (config.{env}.yaml plus
+# secrets.{env}.yaml, delivered as a ConfigMap and a Secret on EKS), and this
+# file only restates them in the shape dbt expects. There is no path by which
+# dbt can connect somewhere the rest of the platform is not.
+#
+# The defaults exist solely so `dbt parse` can build a manifest at image build
+# time, when no warehouse is reachable and none is needed. They are never used
+# to connect to anything.
+analytics:
+  target: "{{ env_var('DBT_TARGET', 'default') }}"
+  outputs:
+    default:
+      type: clickhouse
+      host: "{{ env_var('DBT_CLICKHOUSE_HOST', 'clickhouse') }}"
+      port: "{{ env_var('DBT_CLICKHOUSE_PORT', '8123') | int }}"
+      user: "{{ env_var('DBT_CLICKHOUSE_USER', 'dagster') }}"
+      password: "{{ env_var('DBT_CLICKHOUSE_PASSWORD', '') }}"
+      schema: "{{ env_var('DBT_CLICKHOUSE_DATABASE', 'analytics') }}"
+      driver: http
+      secure: False
+      # One statement at a time. The models are few and the warehouse is a
+      # single node here; concurrency would buy nothing and makes a failure
+      # harder to read.
+      threads: 1
+      connect_timeout: 10
+      send_receive_timeout: 300

@@ -1,0 +1,183 @@
+dbs:
+  postgres:
+    host: "${RDS_HOST}"   # rendered at deploy time
+    port: 5432
+    db: dagster
+  clickhouse:
+    host: clickhouse    # Docker Compose service name / k8s Service name
+    port: 8123
+    database: analytics
+
+data_pipeline:
+  postgres: #this has all the info & queries that regard it
+    # Would normally make the tables all at once in a ddl
+    # for the project but this is just a mock prod set up
+    make_etl_table: |
+      CREATE TABLE IF NOT EXISTS etl_table (
+      id BIGSERIAL PRIMARY KEY,
+      x_1 DOUBLE PRECISION NOT NULL,
+      x_2 DOUBLE PRECISION NOT NULL,
+      x_3 DOUBLE PRECISION NOT NULL,
+      x_4 DOUBLE PRECISION NOT NULL,
+      y   DOUBLE PRECISION NOT NULL,
+      inserted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    make_ml_table: |
+      CREATE TABLE IF NOT EXISTS model_registry (
+      id BIGSERIAL PRIMARY KEY,
+      model_path TEXT NOT NULL,
+      rmse DOUBLE PRECISION NOT NULL,
+      features JSONB NOT NULL,
+      inserted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    # CREATE TABLE IF NOT EXISTS is a no-op against a table that already exists,
+    # so a volume created before the metric columns were added would keep the
+    # old three-column shape and the registry insert would fail on the first
+    # run. Same idempotent-ALTER pattern the Spark consumer uses for
+    # bsky_records -- both statements are safe on a fresh volume and on an
+    # upgraded one, and adding a nullable column with no default is a
+    # catalog-only change in Postgres rather than a table rewrite.
+    alter_ml_table:
+      - ALTER TABLE model_registry ADD COLUMN IF NOT EXISTS train_rmse DOUBLE PRECISION
+      - ALTER TABLE model_registry ADD COLUMN IF NOT EXISTS r2 DOUBLE PRECISION
+      - ALTER TABLE model_registry ADD COLUMN IF NOT EXISTS n_train INTEGER
+      - ALTER TABLE model_registry ADD COLUMN IF NOT EXISTS n_test INTEGER
+      - ALTER TABLE model_registry ADD COLUMN IF NOT EXISTS trained_at TIMESTAMP
+    etl_table_name: 'etl_table'
+    # Incremental read: only rows newer than what the warehouse already holds.
+    read_etl_table: |
+      SELECT * FROM etl_table WHERE id > :watermark ORDER BY id LIMIT :batch_size
+    etl_insert_statement: |
+      INSERT INTO {0} (model_path, rmse, features)
+      VALUES (%s, %s, %s)
+    # table_name
+
+    ml_table_name: 'model_registry'
+    ml_insert_statement: |
+      INSERT INTO {0} (model_path, rmse, features) VALUES (%s, %s, %s)
+    # table_name
+
+  source:
+    # The mock source's shape, config-driven because the ml pipeline's holdout
+    # depends on it. At the original 100 rows a 20% test set was 20 points and
+    # its RMSE moved by several percent from one seed to the next, which would
+    # make the model asset check flap rather than catch anything.
+    # The column count is NOT here: etl_table's DDL declares x_1..x_4 and the
+    # ml pipeline's expected_schema_from_etl_pipeline asserts the same four, so
+    # the width is pinned in two other places already. A config key that can
+    # only legally hold one value reads like a knob and isn't one.
+    num_rows: 2000
+    # y is a linear function of x plus this much gaussian noise. Without it the
+    # fit is exact, holdout RMSE lands around 1e-13, and the model check becomes
+    # a test of floating point rather than of the model. With it the holdout
+    # number means what it says: the noise floor is the best any model can do.
+    noise_sigma: 2.0
+
+  streaming:
+    bsky_table_name: 'bsky_records'
+    # Bounded so a cold start or a long outage lands a sequence of modest files
+    # rather than one enormous one -- the same reasoning as the Spark consumer's
+    # maxOffsetsPerTrigger. The sensor keeps firing until the backlog drains.
+    landing_batch_size: 50000
+    # Incremental read of the change-event log: creates, updates and deletes.
+    # kafka_partition/kafka_offset are carried purely as provenance: they are the
+    # stream's true total order, and `id` only reproduces it while there is a
+    # single writer. See ensure_postgres_table in spark_consumer/consumer.py.
+    read_bsky_records: |
+      SELECT id, did, collection, rkey, operation, text, created_at, langs, event_time_us, cid,
+             is_deleted, kafka_partition, kafka_offset
+      FROM bsky_records WHERE id > :watermark ORDER BY id LIMIT :batch_size
+
+  clickhouse:
+    # Warehouse table names, and the key and version each one deduplicates on.
+    # records_key is the AT Protocol identity of a record, not our ingestion id:
+    # it is what makes an edit or a delete land on the row it refers to.
+    records_table: 'bsky_records_snapshot'
+    # The AT Protocol identity of a record is the full AT-URI:
+    # at://<did>/<collection>/<rkey>. rkey is only unique WITHIN a collection for
+    # a repo, so (did, rkey) alone is not an identity -- it holds for the default
+    # subscription because post/repost/like/follow all use TID rkeys, and breaks
+    # the moment JETSTREAM_COLLECTIONS is widened, because lexicons like
+    # app.bsky.actor.profile use the fixed rkey 'self'. Two such records for one
+    # account would collapse into a single row.
+    records_key: ['did', 'collection', 'rkey']
+    records_version_column: 'event_time_us'
+    etl_table: 'etl_table_snapshot'
+
+  schedules:
+    # Physically removes posts their authors deleted. Daily rather than per-load
+    # because a ClickHouse mutation rewrites every part it touches.
+    #
+    # 03:17, NOT 03:00, and the seventeen minutes are load-bearing. Any
+    # `0 H * * *` schedule coincides with `*/5 * * * *` by construction, so the
+    # daily purge landed on a dbt mart rebuild every single day. On 2026-08-03
+    # the rebuild tick arrived 20 seconds into the purge mutation and the two
+    # together exhausted the warehouse container. The purge is much cheaper now,
+    # but two heavy jobs sharing a start time was never intentional -- it was an
+    # accident of both crons being anchored to the hour.
+    purge_deleted_records: "17 3 * * *"
+    # Landed Parquet older than this is dropped, by purge_landing_archive on
+    # the same daily schedule. Two reasons, and the privacy one is the reason it
+    # is not simply "however much disk we have": purge_deleted_records cannot
+    # reach the archive, so a retracted post's text lives in a landed file until
+    # the file goes. 7 days is a deliberate trade -- long enough that a warehouse
+    # rebuild covers any outage anyone would sit through, short enough that
+    # retracted content is not kept indefinitely.
+    landing_retention_days: 7
+    # Rebuild the dbt marts. A cron rather than a freshness-driven condition:
+    # the trigger and the alarm are separate concerns, and this is the trigger.
+    # 5 minutes is a cost decision, not a latency one -- see dbt/README.md.
+    # Anything needing the live stream reads stg_bsky_records, which is a view.
+    dbt_rebuild: "*/5 * * * *"
+
+  freshness:
+    # Pure alarms. Nothing here triggers a rebuild -- that is the cron in
+    # `schedules.dbt_rebuild` above. A FreshnessPolicy only tells the
+    # FreshnessDaemon what PASS/WARN/FAIL should mean for an asset.
+    #
+    # Both windows must sit CLEAR OF the rebuild cadence, or the alarm fires on
+    # every ordinary cycle. At a 5 minute cron and a ~15 second build, a mart is
+    # routinely 5 minutes stale a moment before its next rebuild; warning at 5
+    # would mean warning always, and an alarm that is always on is not an alarm.
+    # 8 gives the cron a missed tick of headroom before anyone is told.
+    marts:
+      warn_after_minutes: 8
+      fail_after_minutes: 15
+    # The snapshot the sensor loads. No automation -- bsky_record_sensor already
+    # drives it -- so these are purely an alarm, and they exist to tell the two
+    # failure modes apart: snapshot FAIL with marts PASS is an ingest outage,
+    # marts FAIL with snapshot PASS is dbt. Both FAIL means ingest has been down
+    # long enough that the marts cannot keep up either.
+    snapshot:
+      warn_after_minutes: 3
+      fail_after_minutes: 10
+
+  io_manager:
+    # reuses the compute logs bucket under its own prefix
+    type: s3
+    bucket: "${COMPUTE_LOGS_BUCKET}"
+    prefix: dagster-io
+
+  landing_zone:
+    # parquet landing zone between Postgres and the warehouse; a third prefix in
+    # the same bucket as compute-logs/ and dagster-io/, and the IRSA policy is
+    # already bucket-wide, so no IAM change is needed
+    type: s3
+    bucket: "${COMPUTE_LOGS_BUCKET}"
+    prefix: landing
+    records_dataset: 'bsky_records'
+    etl_dataset: 'etl_table'
+    # ClickHouse reads the landed file itself via s3(), which needs a regional
+    # endpoint to build the URL. Rendered by aws_up.sh alongside the bucket;
+    # blank falls back to the AWS_REGION already set on the pod.
+    region: "${AWS_REGION}"
+
+  asset_checks:
+    cols_required_to_not_have_nulls: ["x_1", "x_2", "x_3", "x_4", "y"]
+    # Deletes are a real and constant share of the firehose -- ~3-4% observed
+    # over 128k events -- so this is an anomaly bound, not a correctness one.
+    # Set well clear of steady state: it is meant to catch the producer
+    # mis-tagging operations or a mass retraction, not normal variance.
+    # The check that reads it is non-blocking on purpose: a delete spike is
+    # surprising, not wrong, and halting ingest on it would be the wrong call.
+    max_delete_ratio: 0.25

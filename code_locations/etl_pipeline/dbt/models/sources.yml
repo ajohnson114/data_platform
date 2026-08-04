@@ -1,0 +1,24 @@
+version: 2
+
+sources:
+  - name: warehouse
+    database: analytics
+    schema: analytics
+    description: >
+      Tables the loader writes. dbt reads these and never writes them -- the
+      boundary between EL and T runs exactly here.
+    tables:
+      - name: bsky_records_snapshot
+        description: >
+          One row per AT Protocol record, current state. A ReplacingMergeTree
+          keyed on (did, collection, rkey) and versioned by event_time_us, so it
+          must be read with FINAL to collapse superseded versions and drop
+          tombstoned records. stg_bsky_records does that once so nothing
+          downstream has to remember.
+
+          Not only posts: likes, reposts and follows share the table and carry
+          no text.
+
+      - name: etl_table_snapshot
+        description: The batch pipeline's output. Not modelled yet; declared so
+          the lineage shows what else the warehouse holds.
