@@ -304,7 +304,7 @@ rebuild came to start twenty seconds into the nightly warehouse purge on
 has since moved to `17 3 * * *`. Nothing in the condition above changed — but a
 full rebuild reads the whole record stream, and that is a real claim on the
 warehouse when something else is rewriting it. See
-[When the Purge Took the Warehouse Down](../../../README.md#when-the-purge-took-the-warehouse-down).
+[When the Purge Took the Warehouse Down](../../../docs/incident-2026-08-03.md).
 
 ### The alarm
 
