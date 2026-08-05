@@ -88,7 +88,7 @@ Jetstream  → Kafka Producer → Kafka → Spark Structured Streaming → Postg
                                                                         │
                           Dagster sensor → bsky_records_snapshot ───────┤
                                                                         ├→ ClickHouse ─┬→ NL-to-SQL
-generated → clean → save_data_to_postgres_db → Postgres.etl_table       │  (analytics)  └→ ml_pipeline
+generated → clean → save_data_to_postgres_db → Postgres.etl_table       │  (analytics) └→ ml_pipeline
                                      └→ etl_table_snapshot ─────────────┘
 ```
 
